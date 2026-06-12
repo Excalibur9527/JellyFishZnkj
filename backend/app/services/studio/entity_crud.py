@@ -207,7 +207,11 @@ async def get_entity(
     thumbnail = thumbnails.get(entity_id, "")
     if entity_type_norm in {"actor", "character"}:
         read_model = spec.read_model
-        return read_model.model_validate(obj).model_copy(update={"thumbnail": thumbnail}).model_dump()
+        overrides: dict[str, Any] = {"thumbnail": thumbnail}
+        if entity_type_norm == "character":
+            actor = await db.get(Actor, obj.actor_id) if obj.actor_id else None
+            overrides["view_count"] = actor.view_count if actor else 1
+        return read_model.model_validate(obj).model_copy(update=overrides).model_dump()
     return _asset_read_payload(obj, thumbnail)
 
 
@@ -233,6 +237,15 @@ async def update_entity(
         if "costume_id" in update_data and update_data["costume_id"] is not None and await db.get(Costume, update_data["costume_id"]) is None:
             raise HTTPException(status_code=400, detail=entity_not_found("Costume"))
 
+        # view_count lives on Actor, not Character — proxy the update
+        new_view_count = update_data.pop("view_count", None)
+        if new_view_count is not None:
+            actor_id = update_data.get("actor_id") or obj.actor_id
+            if actor_id:
+                actor = await db.get(Actor, actor_id)
+                if actor is not None:
+                    actor.view_count = int(new_view_count)
+
     for key, value in update_data.items():
         setattr(obj, key, value)
     await db.flush()
@@ -240,8 +253,11 @@ async def update_entity(
 
     if entity_type_norm in {"actor", "character"}:
         read_model = spec.read_model
-        payload = read_model.model_validate(obj).model_dump()
-        payload["thumbnail"] = ""
+        overrides: dict[str, Any] = {"thumbnail": ""}
+        if entity_type_norm == "character":
+            actor = await db.get(Actor, obj.actor_id) if obj.actor_id else None
+            overrides["view_count"] = actor.view_count if actor else 1
+        payload = read_model.model_validate(obj).model_copy(update=overrides).model_dump()
         return payload
     return _asset_read_payload(obj, "")
 

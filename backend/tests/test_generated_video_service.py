@@ -13,6 +13,7 @@ from app.models.studio import (
     CameraMovement,
     CameraShotType,
     Chapter,
+    Character,
     Project,
     ProjectStyle,
     ProjectVisualStyle,
@@ -33,6 +34,7 @@ from app.services.llm import resolve_provider_key_from_name
 from app.services.studio.generation.video.derive_preview import derive_video_preview
 from app.services.studio.generation.video.build_base import VideoBaseDraft
 from app.services.studio.generation.video.build_context import VideoGenerationContext
+from app.services.studio.shot_video_prompt_pack import append_video_originality_safety_prompt
 from app.services.studio import get_shot_video_readiness
 
 
@@ -53,9 +55,24 @@ async def _seed_shot_graph(db: AsyncSession) -> None:
         visual_style=ProjectVisualStyle.live_action,
     )
     chapter = Chapter(id="c1", project_id="p1", index=1, title="第一章")
-    prev_shot = Shot(id="s0", chapter_id="c1", index=0, title="镜头零", script_excerpt="角色沿着墙边逼近门口。")
-    shot = Shot(id="s1", chapter_id="c1", index=1, title="镜头一", script_excerpt="角色推门而入。")
-    next_shot = Shot(id="s2", chapter_id="c1", index=2, title="镜头二", script_excerpt="角色停下脚步，盯向走廊尽头。")
+    character = Character(
+        id="char1",
+        project_id="p1",
+        name="林川",
+        description="30岁，调查员，黑色夹克",
+        style=ProjectStyle.real_people_city,
+        visual_style=ProjectVisualStyle.live_action,
+        actor_id=None,
+    )
+    prev_shot = Shot(
+        id="s0",
+        chapter_id="c1",
+        index=0,
+        title="镜头零",
+        script_excerpt="林川（30岁，调查员，黑色夹克）沿着墙边逼近门口。",
+    )
+    shot = Shot(id="s1", chapter_id="c1", index=1, title="镜头一", script_excerpt="林川推门而入。")
+    next_shot = Shot(id="s2", chapter_id="c1", index=2, title="镜头二", script_excerpt="林川停下脚步，盯向走廊尽头。")
     prev_detail = ShotDetail(
         id="s0",
         camera_shot=CameraShotType.ms,
@@ -85,7 +102,7 @@ async def _seed_shot_graph(db: AsyncSession) -> None:
         duration=3,
         description="角色停住动作，盯向走廊尽头，情绪绷紧。",
     )
-    db.add_all([project, chapter, prev_shot, shot, next_shot, prev_detail, detail, next_detail])
+    db.add_all([project, chapter, character, prev_shot, shot, next_shot, prev_detail, detail, next_detail])
     await db.commit()
 
 
@@ -144,10 +161,12 @@ async def test_preview_prompt_and_images_uses_auto_frame_ids() -> None:
         )
 
         assert "镜头标题：镜头一" in prompt
-        assert "剧本摘录：角色推门而入。" in prompt
+        assert "剧本摘录：林川推门而入。" in prompt
         assert "动作节拍：" in prompt
         assert "上一镜头：" in prompt
         assert "下一镜头目标：" in prompt
+        assert "角色身份锚点：林川=30岁，调查员，黑色夹克" in prompt
+        assert "新入画角色只能作为新增角色进入画面" in prompt
         assert "构图锚点：" in prompt
         assert "朝向与视线：" in prompt
         assert images == ["f1", "f2"]
@@ -175,6 +194,7 @@ async def test_preview_prompt_and_images_prefers_request_images_when_provided() 
         assert "自定义视频提示词" in prompt
         assert "动作节拍：" in prompt
         assert "连续性要求：" in prompt
+        assert "角色身份锚点：林川=30岁，调查员，黑色夹克" in prompt
         assert images == ["manual-first", "manual-last"]
         assert pack is not None
         assert pack["camera"]["duration"] == 6
@@ -250,6 +270,7 @@ async def test_build_run_args_uses_prompt_pack_when_prompt_missing(monkeypatch: 
 
         assert "镜头标题：镜头一" in run_args["input"]["prompt"]
         assert "动作节拍：" in run_args["input"]["prompt"]
+        assert "角色身份锚点：林川=30岁，调查员，黑色夹克" in run_args["input"]["prompt"]
         assert run_args["input"]["ratio"] == "16:9"
         assert run_args["prompt_preview"]["shot_id"] == "s1"
         assert run_args["prompt_preview"]["pack"]["action_beats"]
@@ -290,6 +311,7 @@ async def test_template_render_is_enriched_with_guidance_when_template_omits_it(
         assert "连续性要求：" in derived.rendered_prompt
         assert "构图锚点：" in derived.rendered_prompt
         assert "朝向与视线：" in derived.rendered_prompt
+        assert "原创角色约束" in derived.rendered_prompt
     await engine.dispose()
 
 
@@ -315,6 +337,7 @@ async def test_manual_video_prompt_is_also_enriched_with_guidance() -> None:
         assert "连续性要求：" in derived.rendered_prompt
         assert "构图锚点：" in derived.rendered_prompt
         assert "朝向与视线：" in derived.rendered_prompt
+        assert "原创角色约束" in derived.rendered_prompt
     await engine.dispose()
 
 
@@ -353,6 +376,14 @@ async def test_template_render_keeps_existing_guidance_without_duplicate_suffix(
 
         assert derived.rendered_prompt.count("连续性要求：") == 1
     await engine.dispose()
+
+
+def test_video_originality_safety_prompt_is_not_duplicated() -> None:
+    prompt = "镜头提示词\n\n原创角色约束：人物为原创虚构角色。"
+
+    enriched = append_video_originality_safety_prompt(prompt)
+
+    assert enriched == prompt
 
 
 @pytest.mark.asyncio

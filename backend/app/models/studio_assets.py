@@ -219,6 +219,12 @@ class Character(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False, comment="角色名称")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="", comment="角色描述")
+    visual_fingerprint: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        default=None,
+        comment="视觉指纹：AI 优化后的外貌描述（面型/发色/瞳色/体型/服装颜色等），供分镜帧提示词直接复用",
+    )
     style: Mapped[ProjectStyle] = mapped_column(String(32), nullable=False, comment="题材/风格")
     visual_style: Mapped[ProjectVisualStyle] = mapped_column(
         String(16),

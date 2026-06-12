@@ -20,6 +20,7 @@ class ResolvedProviderConfig:
     provider_key: str
     api_key: str
     base_url: str | None
+    api_secret: str | None = None
 
 
 def _status_value(value: ProviderStatus | str | None) -> str:
@@ -78,10 +79,12 @@ def resolve_provider_config_from_provider(
         provider_key=provider_key,
         category=category,
     )
+    api_secret = (provider.api_secret or "").strip() or None
     return ResolvedProviderConfig(
         provider_key=provider_key,
         api_key=api_key,
         base_url=base_url,
+        api_secret=api_secret,
     )
 
 

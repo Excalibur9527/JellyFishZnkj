@@ -23,6 +23,7 @@ def _append_division_rows(
     for shot_division in result.shots:
         title = (shot_division.shot_name or "").strip() or f"镜头 {shot_division.index}"
         shot_id = str(uuid.uuid4())
+        emotions_json = [e.model_dump() for e in shot_division.character_emotions] if shot_division.character_emotions is not None else None
         db_add(
             Shot(
                 id=shot_id,
@@ -30,6 +31,7 @@ def _append_division_rows(
                 index=shot_division.index,
                 title=title,
                 script_excerpt=shot_division.script_excerpt,
+                character_emotions=emotions_json,
             )
         )
         db_add(

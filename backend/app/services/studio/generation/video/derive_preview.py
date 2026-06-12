@@ -9,6 +9,7 @@ from app.services.studio.shot_video_prompt_pack import (
     _pack_variables,
     _render_template,
     _resolve_video_prompt_template,
+    append_video_originality_safety_prompt,
     build_shot_video_prompt_pack,
     enrich_rendered_video_prompt,
 )
@@ -39,6 +40,7 @@ async def derive_video_preview(
             rendered_prompt=base.prompt,
             pack=pack,
         )
+        rendered_prompt = append_video_originality_safety_prompt(rendered_prompt)
         return VideoDerivedPreview(
             shot_id=base.shot_id,
             reference_mode=context.reference_mode,
@@ -65,6 +67,7 @@ async def derive_video_preview(
                 rendered_prompt=rendered_prompt,
                 pack=pack,
             )
+    rendered_prompt = append_video_originality_safety_prompt(rendered_prompt)
 
     return VideoDerivedPreview(
         shot_id=base.shot_id,

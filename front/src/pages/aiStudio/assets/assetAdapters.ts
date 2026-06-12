@@ -1,5 +1,6 @@
 import { StudioImageTasksService } from '../../../services/generated'
 import { StudioEntitiesApi } from '../../../services/studioEntities'
+import { post } from '../../../services/http'
 import type { AssetEditPageBaseProps, BaseAsset, BaseAssetImage } from './components/AssetEditPageBase'
 
 type AdapterConfig<TAsset extends BaseAsset, TImage extends BaseAssetImage> = Omit<
@@ -62,6 +63,25 @@ export const assetAdapters = {
         requestBody: { image_id: imageId, model_id: null, prompt: payload.prompt, images: payload.images } as any,
       })
       return res.data?.task_id ?? null
+    },
+    characterSheetActions: {
+      renderSheetPrompt: async (id: string) => {
+        const res = await post<{ data?: { prompt?: string; images?: string[] } }>(
+          `/v1/studio/image-tasks/characters/${id}/sheet-render-prompt`,
+          { model_id: null },
+        )
+        return {
+          prompt: (res?.data?.prompt ?? '') as string,
+          images: (res?.data?.images ?? []) as string[],
+        }
+      },
+      createSheetTask: async (id: string) => {
+        const res = await post<{ data?: { task_id?: string } }>(
+          `/v1/studio/image-tasks/characters/${id}/sheet-tasks`,
+          { model_id: null },
+        )
+        return res?.data?.task_id ?? null
+      },
     },
   } satisfies AdapterConfig<any, any>,
   actor: {

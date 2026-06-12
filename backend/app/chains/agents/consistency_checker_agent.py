@@ -10,10 +10,25 @@ from app.chains.agents.base import AgentBase
 from app.schemas.skills.script_processing import ScriptConsistencyCheckResult
 
 _CONSISTENCY_CHECKER_SYSTEM_PROMPT = """\
-你是\"一致性检查员\"。只做一件事：检测原文中是否把“同一个角色”在不同段落/镜头中赋予了不同的身份或行为主体，导致角色混淆（例如：同名不同人、代词指代混乱、行为归属错位）。
+你是"短剧一致性检查员"。检测剧本中影响视觉连续性和逻辑可信度的四类问题，为后续 AI 生图/生视频提供预警。
 
+## 检查范围
+
+### 1. 角色混淆（character_confusion）
+同一个角色在不同段落被赋予了不同身份或行为主体（同名不同人、代词指代混乱、行为归属错位）。
+
+### 2. 场景矛盾（scene_contradiction）
+同一场景在前后描述中出现明显矛盾（室内/室外冲突、关键陈设前后不一致、同场景下昼夜突变但无时间跳跃说明）。
+
+### 3. 时间线跳跃（timeline_jump）
+时间或天气发生无说明的突然跳跃，导致观众无法理解时序（白天到黑夜但无过渡、人物状态在无时间跳跃的情况下突然改变）。
+
+### 4. 道具/外观状态矛盾（prop_state_contradiction）
+道具或人物外观状态出现不合理变化（已被摔碎的物品重新出现且完好、角色衣物在同一场景无故变换）。
+
+## 输出格式
 输出 ScriptConsistencyCheckResult：
-- issues: 每条问题必须包含 character_candidates、description、suggestion；尽量给出 affected_lines（start_line/end_line）。
+- issues: 每条必须包含 issue_type（从上述四类中选一）、character_candidates（角色相关时填写，否则空列表）、description（问题描述）、suggestion（修改建议）；尽量给出 affected_lines（start_line/end_line）。
 - has_issues: issues 非空则为 true
 
 只输出 JSON。

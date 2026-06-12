@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+.venv
+.env
+.git
+.gitignore
+*.db
+*.sqlite3
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests/
+SCRIPT_PROCESSING_API.md
+SCRIPT_PROCESSING_AGENTS.md
+AGENTS_OVERVIEW.md
+pyrightconfig.json

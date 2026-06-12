@@ -60,6 +60,17 @@ async def create_entity_image(
         raise HTTPException(status_code=404, detail=entity_not_found(spec.model.__name__))
 
     parsed = spec.image_create_model.model_validate(body).model_dump()
+
+    # 幂等：若相同 (entity_id, quality_level, view_angle) 已存在则直接返回
+    id_field_col = getattr(spec.image_model, spec.id_field)
+    existing_stmt = select(spec.image_model).where(id_field_col == entity_id)
+    for key in ("quality_level", "view_angle"):
+        if key in parsed and parsed[key] is not None:
+            existing_stmt = existing_stmt.where(getattr(spec.image_model, key) == parsed[key])
+    existing = (await db.execute(existing_stmt)).scalars().first()
+    if existing is not None:
+        return spec.image_read_model.model_validate(existing).model_dump()
+
     obj = spec.image_model(**{spec.id_field: entity_id, **parsed})
     db.add(obj)
     await db.flush()

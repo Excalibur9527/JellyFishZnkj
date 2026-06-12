@@ -59,6 +59,7 @@ export type AssetUpdate = {
   view_count: number
   visual_style: '现实' | '动漫'
   style?: string
+  visual_fingerprint?: string | null
 }
 
 const DEFAULT_ANGLES: AssetViewAngle[] = ['FRONT', 'LEFT', 'RIGHT', 'BACK']
@@ -81,6 +82,7 @@ export type BaseAsset = {
   view_count?: number
   visual_style?: '现实' | '动漫'
   style?: string
+  visual_fingerprint?: string | null
 }
 
 export type BaseAssetImage = {
@@ -105,6 +107,10 @@ export type AssetEditPageBaseProps<TAsset extends BaseAsset, TImage extends Base
   updateImage: (assetId: string, imageId: number, payload: { file_id: string; width?: number | null; height?: number | null; format?: string | null }) => Promise<void>
   renderPrompt: (assetId: string, imageId: number) => Promise<{ prompt: string; images: string[] }>
   createGenerationTask: (assetId: string, imageId: number, payload: { prompt: string; images: string[] }) => Promise<string | null>
+  characterSheetActions?: {
+    renderSheetPrompt: (assetId: string) => Promise<{ prompt: string; images: string[] }>
+    createSheetTask: (assetId: string) => Promise<string | null>
+  }
   onNavigate: (to: string, replace?: boolean) => void
 }
 
@@ -169,6 +175,7 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
   updateImage,
   renderPrompt,
   createGenerationTask,
+  characterSheetActions,
   onNavigate,
 }: AssetEditPageBaseProps<TAsset, TImage>) {
   const { options: projectStyleOptions, defaultVisualStyle, getDefaultStyle } = useProjectStyleOptions()
@@ -186,10 +193,21 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
   const [formStyle, setFormStyle] = useState<string>(getDefaultStyle(defaultVisualStyle))
   const [savingBase, setSavingBase] = useState(false)
 
+  const [formVisualFingerprint, setFormVisualFingerprint] = useState('')
+
   const [smartDetectLoading, setSmartDetectLoading] = useState(false)
   const [smartDetectOpen, setSmartDetectOpen] = useState(false)
   const [smartDetectIssues, setSmartDetectIssues] = useState<string[]>([])
   const [smartDetectOptimizedDesc, setSmartDetectOptimizedDesc] = useState('')
+  const [smartDetectFingerprint, setSmartDetectFingerprint] = useState('')
+
+  const [sheetPreviewOpen, setSheetPreviewOpen] = useState(false)
+  const [sheetPreviewLoading, setSheetPreviewLoading] = useState(false)
+  const [sheetPrompt, setSheetPrompt] = useState('')
+  const [sheetRefImages, setSheetRefImages] = useState<string[]>([])
+  const [sheetGenerating, setSheetGenerating] = useState(false)
+  const sheetRelationType = relationType === 'character_image' ? 'character_sheet' : null
+  const sheetRelationEntityId = sheetRelationType && assetId ? assetId : null
 
   const [generatingByImageId, setGeneratingByImageId] = useState<Record<number, boolean>>({})
   const [generationTask, setGenerationTask] = useState<RelationTaskState | null>(null)
@@ -254,8 +272,10 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
           ? result.issues.filter((it: unknown): it is string => typeof it === 'string' && it.trim().length > 0)
           : []
         const optimizedDesc = String(result.optimized_description ?? '').trim()
+        const fingerprint = String(result.visual_fingerprint ?? '').trim()
         setSmartDetectIssues(issues)
         setSmartDetectOptimizedDesc(optimizedDesc)
+        setSmartDetectFingerprint(fingerprint)
         setSmartDetectOpen(true)
         if (issues.length > 0) message.warning(`发现 ${issues.length} 项可能缺失信息`)
         else message.success('未发现缺失信息')
@@ -274,6 +294,15 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
     relationEntityId: smartDetectRelationEntityId,
     onTaskSettled: applySmartDetectResult,
   })
+  const { task: sheetTask, trackTaskData: trackSheetTaskData } = useCancelableRelationTask({
+    enabled: !!sheetRelationType && !!sheetRelationEntityId,
+    relationType: sheetRelationType || '',
+    relationEntityId: sheetRelationEntityId,
+    onTaskSettled: async () => {
+      message.success('角色设定图生成完成')
+      await refreshImages()
+    },
+  })
   useTaskPageContext(
     [
       smartDetectRelationType && smartDetectRelationEntityId
@@ -286,6 +315,12 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
         ? {
             relationType: assetNavigateRelationType,
             relationEntityId: assetId,
+          }
+        : null,
+      sheetRelationType && sheetRelationEntityId
+        ? {
+            relationType: sheetRelationType,
+            relationEntityId: sheetRelationEntityId,
           }
         : null,
     ],
@@ -337,6 +372,7 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
       setFormName(nextAsset.name)
       setFormDesc(nextAsset.description ?? '')
       setFormTags((nextAsset.tags ?? []).join(', '))
+      setFormVisualFingerprint(nextAsset.visual_fingerprint ?? '')
       {
         const nextVisual = (nextAsset.visual_style ?? defaultVisualStyle) as '现实' | '动漫'
         setFormVisualStyle(nextVisual)
@@ -354,6 +390,17 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
       setLoading(false)
     }
   }, [assetId, assetDisplayName, backTo, defaultVisualStyle, ensureImageSlots, getAsset, getDefaultStyle, onNavigate])
+
+  // 仅刷新图片列表，不重置表单字段（避免任务完成回调覆盖用户未保存的编辑）
+  const refreshImages = useCallback(async () => {
+    if (!assetId) return
+    try {
+      const imageRows = await listImages(assetId)
+      setImages(imageRows)
+    } catch {
+      // 静默失败，图片会在下次 loadData 时刷新
+    }
+  }, [assetId, listImages])
 
   useEffect(() => {
     void loadData()
@@ -395,6 +442,9 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
         view_count: nextViewCount,
         visual_style: formVisualStyle,
         style: formStyle,
+        ...(relationType === 'character_image' || relationType === 'actor_image'
+          ? { visual_fingerprint: formVisualFingerprint.trim() || null }
+          : {}),
       }
       const nextAsset = await updateAsset(assetId, payload)
       if (nextAsset) setAsset(nextAsset)
@@ -430,7 +480,7 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
     setSmartDetectLoading(true)
     try {
       const request = () => {
-        if (relationType === 'actor_image') {
+        if (relationType === 'actor_image' || relationType === 'character_image') {
           const character_context = asset?.name ? `角色名：${formName}\n演员标签：${formTags}` : `演员标签：${formTags}`
           return ScriptProcessingService.analyzeCharacterPortraitAsyncApiV1ScriptProcessingAnalyzeCharacterPortraitAsyncPost({
             requestBody: {
@@ -629,14 +679,18 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
       if (finalTaskState && isTerminalStatus(finalTaskState.status)) {
         setGenerationTask(null)
         setGenerationSettledTask(finalTaskState)
+      } else {
+        // 超时退出轮询：清除本地任务状态，任务中心会继续追踪
+        setGenerationTask(null)
+        setGenerationSettledTask(null)
       }
 
       if (finalStatus === 'succeeded') {
         setPromptPreviewOpen(false)
         setPromptPreviewImage(null)
-        await loadData()
+        await refreshImages()
       } else if (finalStatus !== 'failed' && finalStatus !== 'cancelled') {
-        message.warning('生成任务仍在执行，请稍后刷新')
+        message.warning('生成任务仍在执行中，请关注右下角任务中心')
       }
     } catch {
       message.error('发起生成失败')
@@ -722,7 +776,7 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
       message.success('角度图片已更新')
       setHistoryOpen(false)
       setEditingSlotImage(null)
-      await loadData()
+      await refreshImages()
     } catch {
       message.error('更新角度图片失败')
     } finally {
@@ -777,6 +831,7 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <div className="text-gray-600 text-sm">描述</div>
                       {relationType === 'actor_image' ||
+                      relationType === 'character_image' ||
                       relationType === 'scene_image' ||
                       relationType === 'prop_image' ||
                       relationType === 'costume_image' ? (
@@ -811,6 +866,21 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
                     disabled={smartDetectBusy || savingBase}
                   />
                 </div>
+                {(relationType === 'character_image' || relationType === 'actor_image') ? (
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="text-gray-600 text-sm">视觉指纹</div>
+                      <span className="text-xs text-gray-400">（AI 自动生成，跨镜头外貌锚点，逗号分隔关键词）</span>
+                    </div>
+                    <Input.TextArea
+                      rows={2}
+                      value={formVisualFingerprint}
+                      onChange={(e) => setFormVisualFingerprint(e.target.value)}
+                      disabled={smartDetectBusy || savingBase}
+                      placeholder="智能检测后自动填入，或手动输入：瓜子脸，丹凤眼，长直发黑色，白皙，高挑，白色旗袍"
+                    />
+                  </div>
+                ) : null}
                 <div>
                   <div className="text-gray-600 text-sm mb-1">标签（逗号分隔）</div>
                   <Input value={formTags} onChange={(e) => setFormTags(e.target.value)} disabled={smartDetectBusy || savingBase} />
@@ -845,6 +915,38 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
               </div>
             ),
           },
+          ...(characterSheetActions ? [{
+            key: 'sheet',
+            label: '角色设定图（多角度合成参考图）',
+            children: (
+              <div className="space-y-3">
+                <div className="text-sm text-gray-500">
+                  角色设定图是将演员正面图与服装图合成的多角度展示图，作为视频生成的高质量参考图使用，可大幅提升跨镜头人物一致性。
+                </div>
+                <Button
+                  type="primary"
+                  loading={sheetGenerating || !!sheetTask}
+                  onClick={async () => {
+                    if (!assetId || !characterSheetActions) return
+                    setSheetPreviewOpen(true)
+                    setSheetPreviewLoading(true)
+                    try {
+                      const result = await characterSheetActions.renderSheetPrompt(assetId)
+                      setSheetPrompt(result.prompt)
+                      setSheetRefImages(result.images)
+                    } catch {
+                      message.error('获取角色设定图提示词失败')
+                      setSheetPreviewOpen(false)
+                    } finally {
+                      setSheetPreviewLoading(false)
+                    }
+                  }}
+                >
+                  预览并生成角色设定图
+                </Button>
+              </div>
+            ),
+          }] : []),
           {
             key: 'views',
             label: '多镜头图片',
@@ -991,6 +1093,55 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
       </Modal>
 
       <Modal
+        title="角色设定图：提示词预览"
+        open={sheetPreviewOpen}
+        onCancel={() => { setSheetPreviewOpen(false); setSheetPrompt(''); setSheetRefImages([]) }}
+        okText="生成角色设定图"
+        cancelText="取消"
+        confirmLoading={sheetGenerating}
+        onOk={async () => {
+          if (!assetId || !characterSheetActions) return
+          setSheetGenerating(true)
+          try {
+            const taskId = await characterSheetActions.createSheetTask(assetId)
+            if (!taskId) { message.error('生成任务创建失败'); return }
+            trackSheetTaskData({ task_id: taskId, status: 'pending' })
+            message.success('角色设定图生成任务已提交，生成中…')
+            setSheetPreviewOpen(false)
+          } catch {
+            message.error('发起角色设定图生成失败')
+          } finally {
+            setSheetGenerating(false)
+          }
+        }}
+        destroyOnClose
+        width={900}
+      >
+        {sheetPreviewLoading ? (
+          <div className="py-8 text-center"><Spin /></div>
+        ) : (
+          <div className="space-y-3">
+            {sheetRefImages.length > 0 ? (
+              <div>
+                <div className="text-xs text-gray-500 mb-2">参考图（演员正面 + 服装图）</div>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  <Image.PreviewGroup>
+                    {sheetRefImages.map((fid) => (
+                      <Image key={fid} width={72} height={72} style={{ objectFit: 'cover', borderRadius: 8 }} src={buildFileDownloadUrl(fid)} />
+                    ))}
+                  </Image.PreviewGroup>
+                </div>
+              </div>
+            ) : null}
+            <div>
+              <div className="text-xs text-gray-500 mb-2">提示词（可编辑）</div>
+              <Input.TextArea rows={10} value={sheetPrompt} onChange={(e) => setSheetPrompt(e.target.value)} placeholder="提示词…" />
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
         title="智能检测：缺失信息"
         open={smartDetectOpen}
         onCancel={() => setSmartDetectOpen(false)}
@@ -1026,21 +1177,32 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
               <Input.TextArea rows={6} value={smartDetectOptimizedDesc} readOnly />
             </div>
 
+            {(relationType === 'character_image' || relationType === 'actor_image') && smartDetectFingerprint ? (
+              <div>
+                <div className="text-xs text-gray-500 mb-2">视觉指纹（30~60字外貌关键词，跨镜头一致性锚点）</div>
+                <Input.TextArea rows={2} value={smartDetectFingerprint} readOnly />
+              </div>
+            ) : null}
+
             <div className="flex justify-end gap-2">
               <Button
+                type="primary"
                 onClick={() => {
-                  const next = smartDetectOptimizedDesc.trim()
-                  if (!next) {
+                  const nextDesc = smartDetectOptimizedDesc.trim()
+                  if (!nextDesc) {
                     message.warning('未返回有效的优化描述')
                     return
                   }
-                  setFormDesc(next)
+                  setFormDesc(nextDesc)
+                  if ((relationType === 'character_image' || relationType === 'actor_image') && smartDetectFingerprint) {
+                    setFormVisualFingerprint(smartDetectFingerprint)
+                  }
                   setSmartDetectOpen(false)
-                  message.success('已填入描述')
+                  message.success('已填入描述' + (smartDetectFingerprint ? '与视觉指纹' : ''))
                 }}
                 disabled={!smartDetectOptimizedDesc.trim()}
               >
-                填入描述
+                填入描述{(relationType === 'character_image' || relationType === 'actor_image') && smartDetectFingerprint ? '与指纹' : ''}
               </Button>
               <Button onClick={() => setSmartDetectOpen(false)}>关闭</Button>
             </div>

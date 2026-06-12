@@ -22,6 +22,28 @@ def _prepare_shot_frame_input(input_dict: dict[str, Any]) -> dict[str, Any]:
         out["action_beats"] = "；".join(str(item) for item in out["action_beats"] if str(item).strip())
     else:
         out.setdefault("action_beats", "")
+    # 将 character_emotions 列表序列化为可读文本
+    if "character_emotions" in out and isinstance(out["character_emotions"], list):
+        lines = []
+        for e in out["character_emotions"]:
+            if isinstance(e, dict):
+                name = e.get("character_name", "")
+                emotion = e.get("emotion", "")
+                intensity = e.get("intensity", "")
+                hint = e.get("expression_hint", "")
+            else:
+                name = getattr(e, "character_name", "")
+                emotion = getattr(e, "emotion", "")
+                intensity = getattr(e, "intensity", "")
+                hint = getattr(e, "expression_hint", "")
+            if name:
+                parts = [f"{name}：{emotion}（{intensity}）"]
+                if hint:
+                    parts.append(hint)
+                lines.append("、".join(parts))
+        out["character_emotions"] = "；".join(lines) if lines else ""
+    else:
+        out.setdefault("character_emotions", "")
     for key in (
         "visual_style",
         "style",
@@ -44,6 +66,7 @@ def _prepare_shot_frame_input(input_dict: dict[str, Any]) -> dict[str, Any]:
         "scene_context",
         "prop_context",
         "costume_context",
+        "character_emotions",
         "subject_priority",
         "previous_shot_title",
         "previous_shot_script_excerpt",
@@ -91,6 +114,7 @@ _SHOT_FRAME_INPUT_VARS = [
     "scene_context",
     "prop_context",
     "costume_context",
+    "character_emotions",
     "subject_priority",
     "previous_shot_title",
     "previous_shot_script_excerpt",
@@ -114,21 +138,21 @@ _FRAME_FOCUS = {
 
 _SHOT_FRAME_TEMPLATE = """你是一名专业影视分镜提示词设计师，需要为同一项目中的镜头生成**{frame_name}基础提示词**。
 
-你的任务是生成“基础提示词”，只描述画面本身，供后续系统继续拼接图片映射说明。
+你的任务是生成\"基础提示词\"，只描述画面本身，供后续系统继续拼接图片映射说明。
 
 ## 强约束
 1. 必须继承项目级画面表现形式与题材风格：{visual_style} / {style}
 2. 项目是否要求统一风格：{unify_style}
 3. 若镜头信息不足，优先向项目风格与已确认实体设定收敛，不要自由发散到其他风格
 4. 当前镜头已确认的角色、场景、道具、服装名称必须原样保留，不得翻译、不得改名、不得替换为同义词
-5. 不得输出“图1/图2”、不得输出“## 图片内容说明”、不得输出引用映射说明
+5. 不得输出\"图1/图2\"、不得输出\"## 图片内容说明\"、不得输出引用映射说明
 6. 输出应为一句或几句简洁、可视化、可直接用于图像生成模型的中文描述
-7. 尽量保持统一描述口径，优先按“景别/机位/运镜 -> 场景环境 -> 主体人物/关键对象 -> 动作状态 -> 氛围情绪 -> 风格收束”组织
+7. 尽量保持统一描述口径，优先按\"景别/机位/运镜 -> 场景环境 -> 主体人物/关键对象 -> 动作状态 -> 氛围情绪 -> 风格收束\"组织
 8. 只输出一个 JSON 对象：{{"prompt": "你的提示词内容"}}，不要输出其他文字
 9. 当前帧关注重点：{frame_focus}
 10. 主体优先级建议：{subject_priority}
-11. 不要为了“写全信息”而平均罗列所有角色、道具、服装；优先突出主角色、主场景和主动作，其余元素仅在能强化当前画面时再进入提示词
-12. 如果下面提供了“修正要求”，必须逐条满足后再输出最终结果
+11. 不要为了\"写全信息\"而平均罗列所有角色、道具、服装；优先突出主角色、主场景和主动作，其余元素仅在能强化当前画面时再进入提示词
+12. 如果下面提供了\"修正要求\"，必须逐条满足后再输出最终结果
 13. 若存在上一镜头信息，当前画面应尽量承接上一镜头的动作、空间方向、视线或情绪，不要像全新场景重新开局
 14. 若存在下一镜头信息，当前画面应为下一镜头留下自然的动作或情绪收束，避免硬切
 15. 尽量明确主体在画面中的相对位置、朝向与动作峰值，减少构图和轴线突变
@@ -137,7 +161,8 @@ _SHOT_FRAME_TEMPLATE = """你是一名专业影视分镜提示词设计师，需
 18. 若提供了当前帧专项建议，应优先满足该建议，确保首帧/关键帧/尾帧各自承担清晰职责
 19. 若提供了导演指令摘要，应将其视为最高优先级的镜头执行约束，优先体现到最终画面描述中
 20. 若当前为首帧，只能表现事件触发瞬间或最初反应，不要直接把后续完成动作、最终姿态或情绪爆发结果写进画面
-21. 若当前为首帧且镜头存在连续动作链，应优先使用“刚开始 / 尚未完成 / 被打断”的未完成态表达，而不是结果态表达
+21. 若当前为首帧且镜头存在连续动作链，应优先使用\"刚开始 / 尚未完成 / 被打断\"的未完成态表达，而不是结果态表达
+22. 若提供了\"角色当前情绪与微表情\"，必须将其体现在该角色的面部与肢体描写中（如眉眼、嘴角、眼神），禁止用泛化情绪词代替具体表情描述；情绪强度\"强烈\"时表情细节应在提示词中占有明显比重
 
 ## 镜头信息
 剧本摘录：{script_excerpt}
@@ -161,6 +186,7 @@ _SHOT_FRAME_TEMPLATE = """你是一名专业影视分镜提示词设计师，需
 场景：{scene_context}
 道具：{prop_context}
 服装：{costume_context}
+角色当前情绪与微表情：{character_emotions}
 
 ## 相邻镜头承接信息
 上一镜头标题：{previous_shot_title}

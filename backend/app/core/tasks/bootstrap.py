@@ -12,6 +12,9 @@ TASK_ADAPTER_SPECS = (
     ("image_generation", "volcengine", ImageGenerationTask._build_volcengine_impl),
     ("video_generation", "openai", VideoGenerationTask._build_openai_impl),
     ("video_generation", "volcengine", VideoGenerationTask._build_volcengine_impl),
+    ("video_generation", "kling", VideoGenerationTask._build_kling_impl),
+    ("video_generation", "kling_proxy", VideoGenerationTask._build_kling_proxy_impl),
+    ("video_generation", "bailian", VideoGenerationTask._build_bailian_impl),
 )
 
 

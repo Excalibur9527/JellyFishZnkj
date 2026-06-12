@@ -42,14 +42,28 @@ function LinkedAssetTab({
 
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(12)
+
+  const uniqueLinks = useMemo(() => {
+    const seen = new Map<string, (ProjectPropLinkRead | ProjectCostumeLinkRead) & { allLinkIds: number[] }>()
+    for (const l of links) {
+      const assetId = 'prop_id' in l ? l.prop_id : l.costume_id
+      if (seen.has(assetId)) {
+        seen.get(assetId)!.allLinkIds.push(l.id)
+      } else {
+        seen.set(assetId, { ...l, allLinkIds: [l.id] })
+      }
+    }
+    return Array.from(seen.values())
+  }, [links])
+
   const pagedLinks = useMemo(() => {
     const start = (page - 1) * pageSize
-    return links.slice(start, start + pageSize)
-  }, [links, page, pageSize])
+    return uniqueLinks.slice(start, start + pageSize)
+  }, [uniqueLinks, page, pageSize])
 
   useEffect(() => {
     setPage(1)
-  }, [links.length])
+  }, [uniqueLinks.length])
 
   const loadLinks = async () => {
     setLoading(true)
@@ -162,14 +176,16 @@ function LinkedAssetTab({
     }
   }
 
-  const handleUnlink = async (link: ProjectPropLinkRead | ProjectCostumeLinkRead) => {
+  const handleUnlink = async (link: (ProjectPropLinkRead | ProjectCostumeLinkRead) & { allLinkIds: number[] }) => {
     setUnlinkingId(link.id)
     try {
-      if ('prop_id' in link) {
-        await StudioShotLinksService.deleteProjectPropLinkApiV1StudioShotLinksPropLinkIdDelete({ linkId: link.id })
-      } else {
-        await StudioShotLinksService.deleteProjectCostumeLinkApiV1StudioShotLinksCostumeLinkIdDelete({ linkId: link.id })
-      }
+      await Promise.all(
+        link.allLinkIds.map((id) =>
+          'prop_id' in link
+            ? StudioShotLinksService.deleteProjectPropLinkApiV1StudioShotLinksPropLinkIdDelete({ linkId: id })
+            : StudioShotLinksService.deleteProjectCostumeLinkApiV1StudioShotLinksCostumeLinkIdDelete({ linkId: id }),
+        ),
+      )
       message.success('已取消关联')
       await loadLinks()
     } catch {
@@ -204,7 +220,7 @@ function LinkedAssetTab({
           </Space>
         }
       >
-        {links.length === 0 && !loading ? (
+        {uniqueLinks.length === 0 && !loading ? (
           <Empty description={`暂无项目${kind === 'prop' ? '道具' : '服装'}`} image={Empty.PRESENTED_IMAGE_SIMPLE} />
         ) : (
           <div className="space-y-3">
@@ -215,7 +231,7 @@ function LinkedAssetTab({
               const linkThumb = (l as any).thumbnail as string | undefined
               return (
                 <DisplayImageCard
-                  key={l.id}
+                  key={'prop_id' in l ? l.prop_id : l.costume_id}
                   title={<div className="truncate">{asset?.name ?? assetId}</div>}
                   imageUrl={resolveAssetUrl(linkThumb ?? asset?.thumbnail)}
                   imageAlt={asset?.name ?? assetId}
@@ -267,7 +283,7 @@ function LinkedAssetTab({
               <Pagination
                 current={page}
                 pageSize={pageSize}
-                total={links.length}
+                total={uniqueLinks.length}
                 showSizeChanger={false}
                 showTotal={(t) => `共 ${t} 条`}
                 onChange={(p, ps) => {

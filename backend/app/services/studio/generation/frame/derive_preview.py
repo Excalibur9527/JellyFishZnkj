@@ -6,6 +6,37 @@ from app.services.studio.generation.frame.build_context import FrameGenerationCo
 from app.services.studio.generation.shared.types import GenerationDerivedPreview
 
 
+# 现实风格：保留真实影视质感，只约束不得模仿真实人物
+FRAME_FACE_INTEGRITY_LIVE_ACTION = (
+    "人物面部约束：如画面中有人物，必须保留清晰可辨的完整自然五官；"
+    "不要生成无脸、遮脸、背影替代、面部模糊或五官缺失；"
+    "画面应呈现高质量影视级写实质感，保持参考图中人物的面部特征、气质与外貌细节；"
+    "不要模仿任何真实个人、明星、公众人物或版权角色。"
+)
+
+# 动漫/非写实风格：明确保留风格化设计感，避免混入摄影质感
+FRAME_FACE_INTEGRITY_ANIME = (
+    "人物面部约束：如画面中有人物，必须保留清晰可辨的原创虚构人脸和完整自然五官；"
+    "不要生成无脸、遮脸、背影替代、面部模糊或五官缺失；"
+    "画面应是高质量影视概念参考图，保留原创角色的风格化设计感，避免真实摄影照片、街拍或真人抓拍质感；"
+    "不要模仿任何真实个人、明星、公众人物或版权角色。"
+)
+
+# 兼容旧调用路径（无 visual_style 时的默认值，保持现有行为）
+FRAME_ORIGINAL_FACE_INTEGRITY_PROMPT = FRAME_FACE_INTEGRITY_ANIME
+
+
+def _face_integrity_prompt_for_style(visual_style: str | None) -> str:
+    """根据项目视觉风格返回对应的人物面部约束。
+
+    现实（live_action）风格用写实影视约束；其余风格（动漫等）用原有风格化约束。
+    """
+    style = (visual_style or "").strip().lower()
+    if style in ("现实", "live_action"):
+        return FRAME_FACE_INTEGRITY_LIVE_ACTION
+    return FRAME_FACE_INTEGRITY_ANIME
+
+
 def replace_reference_names_in_prompt(
     *,
     base_prompt: str,
@@ -22,6 +53,44 @@ def replace_reference_names_in_prompt(
     for name, token in replace_pairs:
         text = text.replace(name, token)
     return text
+
+
+def should_apply_face_integrity_prompt(
+    *,
+    prompt: str,
+    mappings: list[ShotFramePromptMappingRead],
+) -> bool:
+    """判断当前分镜帧是否包含人物，从而决定是否追加面部完整性约束。"""
+    if any(mapping.type == "character" for mapping in mappings):
+        return True
+    text = str(prompt or "")
+    return any(keyword in text for keyword in ("人物", "角色", "主角", "男人", "女人", "男孩", "女孩", "他", "她"))
+
+
+def append_frame_face_integrity_prompt(
+    *,
+    rendered_prompt: str,
+    mappings: list[ShotFramePromptMappingRead],
+    visual_style: str | None = None,
+) -> str:
+    """为人物分镜帧追加人脸约束。
+
+    根据项目视觉风格选择约束文案：
+    - 现实（live_action）风格：保留写实影视质感，只限制不得模仿真实人物
+    - 动漫等其他风格：保留原有风格化约束，避免摄影质感
+
+    该约束只进入最终图片 prompt，不改变资产绑定。
+    """
+    text = str(rendered_prompt or "").strip()
+    normalized = text.replace(" ", "")
+    if "人物面部约束" in normalized:
+        return text
+    if not should_apply_face_integrity_prompt(prompt=text, mappings=mappings):
+        return text
+    integrity_prompt = _face_integrity_prompt_for_style(visual_style)
+    if not text:
+        return integrity_prompt
+    return f"{text}\n{integrity_prompt}".strip()
 
 
 def _score_frame_guidance_line(
@@ -343,6 +412,11 @@ def derive_frame_preview(
         frame_specific_guidance=base.frame_specific_guidance,
         composition_anchor=base.composition_anchor,
         screen_direction_guidance=base.screen_direction_guidance,
+    )
+    enriched_prompt = append_frame_face_integrity_prompt(
+        rendered_prompt=enriched_prompt,
+        mappings=context.ordered_refs,
+        visual_style=getattr(base, "visual_style", None),
     )
     rendered_prompt = compose_shot_frame_rendered_prompt(
         replaced_prompt=enriched_prompt,

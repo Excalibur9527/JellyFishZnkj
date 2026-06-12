@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import delete as sql_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.utils import apply_keyword_filter, apply_order, paginate
 from app.dependencies import get_db
 from app.models.studio import Project
+from app.models.studio_file_usages import FileUsage
 from app.models.types import ProjectStyle, ProjectVisualStyle
 from app.schemas.common import ApiResponse, PaginatedData, created_response, empty_response, paginated_response, success_response
 from app.services.common import (
@@ -91,7 +92,7 @@ async def list_projects(
     order: str | None = Query(None, description="排序字段"),
     is_desc: bool = Query(False, description="是否倒序"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
+    page_size: int = Query(10, ge=1, le=500),
 ) -> ApiResponse[PaginatedData[ProjectRead]]:
     stmt = select(Project)
     stmt = apply_keyword_filter(stmt, q=q, fields=[Project.name, Project.description])
@@ -170,5 +171,8 @@ async def delete_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[None]:
-    await delete_if_exists(db, Project, project_id)
+    # 先删 file_usages，避免 MySQL 多路径 CASCADE 冲突（1452）
+    await db.execute(sql_delete(FileUsage).where(FileUsage.project_id == project_id))
+    await db.execute(sql_delete(Project).where(Project.id == project_id))
+    await db.commit()
     return empty_response()

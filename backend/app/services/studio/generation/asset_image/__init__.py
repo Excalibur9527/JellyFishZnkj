@@ -5,6 +5,8 @@ from app.services.studio.generation.asset_image.build_base import (
     build_actor_image_base_draft,
     build_asset_image_base_draft,
     build_character_image_base_draft,
+    build_character_sheet_base_draft,
+    ensure_character_sheet_image_row,
 )
 from app.services.studio.generation.asset_image.build_context import (
     AssetImageContext,
@@ -33,6 +35,8 @@ __all__ = [
     "build_asset_image_submission_payload",
     "build_character_image_base_draft",
     "build_character_image_submission_payload",
+    "build_character_sheet_base_draft",
+    "ensure_character_sheet_image_row",
     "derive_asset_image_preview",
 ]
 

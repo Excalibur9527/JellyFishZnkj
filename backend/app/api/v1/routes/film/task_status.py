@@ -235,15 +235,30 @@ async def adopt_task_link(
     if link is None:
         raise HTTPException(status_code=404, detail=entity_not_found("Task link"))
 
-    if str(link.status) == "accepted":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="状态只可正向变更，已采用不可改为未采用",
-        )
-
     from app.models.task_links import GenerationTaskLinkStatus
 
+    # 若该镜头已有其他 accepted 的同类 link，先将其重置为 todo（切换采用）
+    if str(link.status) != "accepted":
+        competing_stmt = select(GenerationTaskLink).where(
+            GenerationTaskLink.relation_entity_id == entity_id,
+            GenerationTaskLink.relation_type == link.relation_type,
+            GenerationTaskLink.resource_type == link.resource_type,
+            GenerationTaskLink.status == GenerationTaskLinkStatus.accepted,
+            GenerationTaskLink.task_id != body.task_id,
+        )
+        competing_result = await db.execute(competing_stmt)
+        for competing_link in competing_result.scalars().all():
+            competing_link.status = GenerationTaskLinkStatus.todo
+
     link.status = GenerationTaskLinkStatus.accepted
+
+    # 若是镜头视频，同步更新 Shot.generated_video_file_id
+    if target_type == "shot" and link.resource_type == "video" and link.file_id:
+        from app.models.studio_shots import Shot
+        shot = await db.get(Shot, entity_id)
+        if shot is not None:
+            shot.generated_video_file_id = link.file_id
+
     await db.flush()
 
     return success_response(

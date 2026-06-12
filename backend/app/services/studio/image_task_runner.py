@@ -68,12 +68,13 @@ async def _persist_images_to_assets(
         return
 
     item = images[0]
-    if not item.url:
+    if not item.url and not item.b64_json:
         return
 
     file_obj = await create_file_from_url_or_b64(
         session,
-        url=item.url,
+        url=item.url or None,
+        b64_data=item.b64_json or None,
         name=f"{relation_type}-{relation_entity_id}",
         prefix=f"generated-images/{relation_type}/{relation_entity_id}",
     )
@@ -162,6 +163,29 @@ async def _persist_images_to_assets(
                 character_id=image_row.character_id,
                 usage_kind=FileUsageKind.character_image,
                 source_ref=f"character_image:{image_row.id}",
+            )
+    elif relation_type == "character_sheet":
+        # 设定图：存入 view_angle=DETAIL, quality_level=ULTRA 的槽位
+        character_id = relation_entity_id
+        stmt_sheet = (
+            select(CharacterImage)
+            .where(
+                CharacterImage.character_id == character_id,
+                CharacterImage.quality_level == AssetQualityLevel.ultra,
+                CharacterImage.view_angle == AssetViewAngle.detail,
+            )
+            .order_by(CharacterImage.id.asc())
+            .limit(1)
+        )
+        sheet_row = (await session.execute(stmt_sheet)).scalars().first()
+        if sheet_row is not None:
+            sheet_row.file_id = file_id
+            await sync_usage_from_character(
+                session,
+                file_id=file_id,
+                character_id=character_id,
+                usage_kind=FileUsageKind.character_image,
+                source_ref=f"character_sheet:{sheet_row.id}",
             )
     elif relation_type == "character":
         character_id = relation_entity_id
@@ -337,6 +361,7 @@ async def run_image_generation_task(
                     base_url=base_url,
                 ),
                 input_=ImageGenerationInput.model_validate(input_dict),
+                timeout_s=300.0,
             )
             await task.run()
             result = await task.get_result()

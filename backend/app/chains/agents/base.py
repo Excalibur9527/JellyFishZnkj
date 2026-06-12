@@ -56,7 +56,7 @@ def _replace_json_literals_for_python(text: str) -> str:
 def _repair_json_like(text: str) -> str:
     """修复 LLM 常见 JSON 格式问题。"""
     repaired = text.strip()
-    repaired = repaired.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    repaired = repaired.replace("\"", '"').replace("\"", '"').replace("'", "'").replace("'", "'")
     repaired = _quote_unquoted_object_keys(repaired)
     # 去除尾逗号：{"a":1,} / [1,2,]
     repaired = re.sub(r",\s*([}\]])", r"\1", repaired)

@@ -26,6 +26,8 @@ celery_app.conf.update(
     task_ignore_result=True,
     timezone="Asia/Shanghai",
     enable_utc=False,
+    task_soft_time_limit=None,
+    task_time_limit=None,
 )
 
 

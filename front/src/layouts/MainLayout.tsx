@@ -9,6 +9,7 @@ import {
   PictureOutlined,
   FileTextOutlined,
   ApiOutlined,
+  FileOutlined,
 } from '@ant-design/icons'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/useAppStore'
@@ -119,6 +120,11 @@ const MainLayout: React.FC = () => {
       key: 'models',
       icon: <ApiOutlined />,
       label: <Link to="/models">模型管理</Link>,
+    },
+    {
+      key: 'files',
+      icon: <FileOutlined />,
+      label: <Link to="/files">文件管理</Link>,
     },
     {
       key: 'settings',

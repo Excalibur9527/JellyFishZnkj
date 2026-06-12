@@ -14,6 +14,11 @@ class CharacterPortraitAnalysisResult(BaseModel):
 
     issues: List[str]
     optimized_description: str
+    visual_fingerprint: str = ""
+    """视觉指纹：从 optimized_description 中提炼的 30~60 字精华外貌标签。
+    格式固定：「脸型，五官特征，发型发色，肤色，体型，服装颜色材质关键词」。
+    供跨镜头提示词直接复用，不含任何修饰词或模糊表达。
+    """
 
 
 __all__ = ["CharacterPortraitAnalysisResult"]

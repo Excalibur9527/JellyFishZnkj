@@ -133,7 +133,7 @@ const ProjectLobby: React.FC = () => {
       } else {
         const res = await StudioProjectsService.listProjectsApiV1StudioProjectsGet({
           page: 1,
-          pageSize: 10,
+          pageSize: 200,
         })
         const items = res.data?.items ?? []
         setProjects(items.map(toUIProject))

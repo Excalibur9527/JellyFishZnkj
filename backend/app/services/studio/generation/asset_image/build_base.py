@@ -7,8 +7,10 @@ from fastapi import HTTPException, status
 from app.models.studio import (
     Actor,
     ActorImage,
+    AssetQualityLevel,
     AssetViewAngle,
     Character,
+    CharacterImage,
     Costume,
     CostumeImage,
     PromptCategory,
@@ -258,6 +260,119 @@ async def build_character_image_base_draft(
                 view_angles=default_view_angles,
             )
         )
+    return AssetImageBaseDraft(
+        entity_type="character",
+        entity_id=character_id,
+        image_id=image_row.id,
+        relation_type="character_image",
+        relation_entity_id=str(image_row.id),
+        prompt=prompt,
+        default_images=refs,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 角色设定图（Character Sheet）                                                 #
+# --------------------------------------------------------------------------- #
+
+def _sheet_fallback_prompt(name: str, desc: str, visual_fingerprint: str) -> str:
+    appearance = visual_fingerprint.strip() if visual_fingerprint else desc.strip()
+    char_part = f"{name}，{appearance}。" if appearance else f"{name}。"
+    return (
+        f"{char_part}"
+        "角色设定参考图，白色或浅灰色中性背景，展示同一角色的多个视角："
+        "正面半身（左上）、四分之三侧面（右上）、面部特写（左下）、全身正面（右下）；"
+        "四格布局，统一光照，清晰展现发型、五官、肤色、服装颜色和材质细节；"
+        "不含任何场景背景、文字水印或多余装饰；"
+        "原创虚构角色，不模仿真实人物或版权角色。"
+    )
+
+
+async def ensure_character_sheet_image_row(
+    db,
+    *,
+    character_id: str,
+) -> CharacterImage:
+    """确保角色存在 DETAIL+ULTRA 的设定图槽位，不存在则创建并返回。"""
+    from sqlalchemy import select as _select
+
+    stmt = _select(CharacterImage).where(
+        CharacterImage.character_id == character_id,
+        CharacterImage.view_angle == AssetViewAngle.detail,
+        CharacterImage.quality_level == AssetQualityLevel.ultra,
+    )
+    row = (await db.execute(stmt)).scalars().first()
+    if row is not None:
+        return row
+
+    row = CharacterImage(
+        character_id=character_id,
+        view_angle=AssetViewAngle.detail,
+        quality_level=AssetQualityLevel.ultra,
+        format="png",
+        is_primary=False,
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
+async def build_character_sheet_base_draft(
+    db,
+    *,
+    character_id: str,
+) -> AssetImageBaseDraft:
+    """为角色生成"设定图"的基础草稿。
+
+    设定图固定存入 view_angle=DETAIL、quality_level=ULTRA 的槽位，
+    生成时会将演员/服装的现有正面图作为参考注入，提高角色外貌一致性。
+    """
+    character = await db.get(Character, character_id)
+    if character is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=entity_not_found("Character"))
+
+    image_row = await ensure_character_sheet_image_row(db, character_id=character_id)
+
+    # 优先使用视觉指纹，无则降级用描述
+    desc = (character.description or "").strip()
+    visual_fingerprint = (getattr(character, "visual_fingerprint", None) or "").strip()
+    fallback = _sheet_fallback_prompt(character.name, desc, visual_fingerprint)
+
+    prompt = await build_prompt_with_template(
+        db,
+        category=PromptCategory.character_sheet,
+        variables={
+            "name": character.name,
+            "description": desc,
+            "visual_fingerprint": visual_fingerprint,
+            "visual_style": _enum_value(character.visual_style),
+            "style": _enum_value(character.style),
+        },
+        fallback_prompt=fallback,
+        not_found_msg="character_sheet template not found, using fallback",
+    )
+
+    # 把演员正面图 + 服装正面图作为参考，最多各取一张
+    refs: list[str] = []
+    if character.actor_id:
+        actor_refs = await pick_ordered_ref_file_ids(
+            db,
+            image_model=ActorImage,
+            parent_field_name="actor_id",
+            parent_id=character.actor_id,
+            view_angles=(AssetViewAngle.front,),
+        )
+        refs.extend(actor_refs[:1])
+    if character.costume_id:
+        costume_refs = await pick_ordered_ref_file_ids(
+            db,
+            image_model=CostumeImage,
+            parent_field_name="costume_id",
+            parent_id=character.costume_id,
+            view_angles=(AssetViewAngle.front,),
+        )
+        refs.extend(costume_refs[:1])
+
     return AssetImageBaseDraft(
         entity_type="character",
         entity_id=character_id,

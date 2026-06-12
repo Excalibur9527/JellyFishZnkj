@@ -67,6 +67,10 @@ class AbstractImageGenerationTask(BaseTask, ABC):
             if self._result is not None:
                 self._provider_task_id = self._result.provider_task_id
         except Exception as exc:  # noqa: BLE001
+            import logging, traceback
+            logging.getLogger("uvicorn.error").error(
+                "image_generation_task_exception: %s\n%s", exc, traceback.format_exc()
+            )
             self._error = str(exc)
             self._result = None
         return None

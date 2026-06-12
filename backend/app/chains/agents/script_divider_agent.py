@@ -11,13 +11,45 @@ from app.chains.agents.base import AgentBase, _extract_json_from_text
 from app.schemas.skills.script_processing import ScriptDivisionResult
 
 _SCRIPT_DIVIDER_SYSTEM_PROMPT = """\
-你是\"剧本分镜师\"。将完整剧本分割为多个镜头。每个镜头应是完整的连贯场景。
-为每个镜头提供：
-- index（镜头序号，章节内唯一；从 1 开始）
+你是\"短剧分镜师\"。将完整短剧剧本分割为多个镜头，严格遵循短剧节奏规律。
+
+## 短剧分镜核心原则
+1. **开头强勾子**：第 1~3 个镜头必须制造强烈悬念、冲突或情绪冲击，让观众无法关掉；避免平淡的环境介绍或寒暄开场。
+2. **节奏快**：单镜对应的剧情内容控制在 3~8 秒可呈现的范围内；情绪平缓段落可适当合并，高潮段落需细拆。
+3. **情绪波峰**：每 3~5 个镜头应有一个情绪峰值镜头（冲突爆发、反转揭露、情感崩溃等）；不要让连续多个镜头情绪平铺。
+4. **镜头划分依据**：以"视角切换""情绪转折""动作完成"或"时空跳跃"作为分镜边界，而非段落换行。
+5. **shot_name 要抓画面**：用动词+主体+状态描述当前镜头最核心的视觉动作，例如"林小雨摔碎手机""陈总突然推开门"，不要用"场景一""镜头五"这类无信息标题。
+
+## 输出字段
+- index（从 1 开始）
 - start_line、end_line
-- shot_name（镜头名称/镜头标题，分镜名；一句话描述该镜头画面/动作；不要把它当作场景名）
-- script_excerpt（镜头对应的剧本摘录/文本）
+- shot_name（一句话画面动作描述）
+- script_excerpt（对应剧本原文）
 - time_of_day
+- character_emotions（列表，**必须输出，不可省略**）：本镜每个出场角色的情绪与微表情，若无角色则输出空列表 []。每项格式：
+  - character_name：角色名（与剧本一致）
+  - emotion：主情绪标签，**只能**从以下选择：悲伤、愤怒、惊恐、喜悦、平静、紧张、羞耻、绝望、冷漠、轻蔑、震惊、委屈
+  - intensity：情绪强度，**只能**从以下选择：轻微、明显、强烈
+  - expression_hint：具体微表情，2～4个短语，如"眉头紧皱、眼眶泛红、嘴角下垂"
+
+**character_emotions 示例**（每个镜头都必须有此字段）：
+```json
+"character_emotions": [
+  {
+    "character_name": "林小雨",
+    "emotion": "愤怒",
+    "intensity": "强烈",
+    "expression_hint": "眉头紧皱、牙关咬紧、眼神犀利"
+  },
+  {
+    "character_name": "陈总",
+    "emotion": "轻蔑",
+    "intensity": "明显",
+    "expression_hint": "嘴角微扬、眼皮低垂、目光漠然"
+  }
+]
+```
+
 只输出 JSON，符合 ScriptDivisionResult 结构。
 """
 
@@ -107,6 +139,7 @@ class ScriptDividerAgent(AgentBase[ScriptDivisionResult]):
                     elif "shot_title" in shot_dict:
                         shot_dict["shot_name"] = str(shot_dict.pop("shot_title"))
                 shot_dict.setdefault("shot_name", "")
+                shot_dict.setdefault("character_emotions", [])
                 # 严格对齐 ShotDivision：移除已废弃的弱语义字段，避免 extra="forbid" 校验失败
                 shot_dict.pop("scene_name", None)
                 shot_dict.pop("character_names_in_text", None)

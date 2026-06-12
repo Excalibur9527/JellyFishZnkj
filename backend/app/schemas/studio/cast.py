@@ -100,12 +100,16 @@ class CharacterUpdate(BaseModel):
     visual_style: ProjectVisualStyle | None = None
     actor_id: str | None = None
     costume_id: str | None = None
+    view_count: int | None = Field(None, ge=1)
+    visual_fingerprint: str | None = None
 
 
 class CharacterRead(CharacterBase):
     model_config = ConfigDict(from_attributes=True)
 
     thumbnail: str = Field("", description="缩略图下载地址")
+    view_count: int = Field(1, ge=1, description="关联演员的视角图片数量")
+    visual_fingerprint: str | None = Field(None, description="视觉指纹")
 
 
 class CharacterPropLinkBase(BaseModel):

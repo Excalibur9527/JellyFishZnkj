@@ -7,7 +7,18 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.studio import AssetViewAngle
+from app.models.studio import AssetQualityLevel, AssetViewAngle
+
+
+def _image_score(row: object) -> int:
+    """角色设定图（DETAIL+ULTRA）优先级最高，其次正面图，其余为 0。"""
+    view = getattr(row, "view_angle", None)
+    quality = getattr(row, "quality_level", None)
+    if view == AssetViewAngle.detail and quality == AssetQualityLevel.ultra:
+        return 2
+    if view == AssetViewAngle.front:
+        return 1
+    return 0
 
 DOWNLOAD_URL_TEMPLATE = "/api/v1/studio/files/{file_id}/download"
 
@@ -35,7 +46,7 @@ async def resolve_thumbnails(
             continue
         parent_id = getattr(row, parent_field_name)
         created_ts = int(row.created_at.timestamp()) if row.created_at else -1
-        score = (1 if row.view_angle == AssetViewAngle.front else 0, created_ts, row.id)
+        score = (_image_score(row), created_ts, row.id)
         current = best.get(parent_id)
         if current is None or score > current[:3]:
             best[parent_id] = (*score, file_id)
@@ -63,7 +74,7 @@ async def resolve_thumbnail_infos(
         parent_id = getattr(row, parent_field_name)
         created_ts = int(row.created_at.timestamp()) if row.created_at else -1
         image_id = int(row.id)
-        score3 = (1 if row.view_angle == AssetViewAngle.front else 0, created_ts, image_id)
+        score3 = (_image_score(row), created_ts, image_id)
         current = best.get(parent_id)
         if current is None or score3 > current[:3]:
             best[parent_id] = (*score3, image_id, file_id)

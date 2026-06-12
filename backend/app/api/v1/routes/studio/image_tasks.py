@@ -32,6 +32,7 @@ from app.services.studio.generation.asset_image import (
     build_asset_image_submission_payload as _build_asset_image_submission_payload_service,
     build_character_image_base_draft as _build_character_image_base_draft_service,
     build_character_image_submission_payload as _build_character_image_submission_payload_service,
+    build_character_sheet_base_draft as _build_character_sheet_base_draft_service,
     derive_asset_image_preview as _derive_asset_image_preview_service,
 )
 from app.services.studio.generation.frame import (
@@ -165,6 +166,7 @@ async def _load_frame_render_guidance(
         "frame_specific_guidance": str(input_dict.get("frame_specific_guidance") or "").strip(),
         "composition_anchor": str(input_dict.get("composition_anchor") or "").strip(),
         "screen_direction_guidance": str(input_dict.get("screen_direction_guidance") or "").strip(),
+        "visual_style": str(input_dict.get("visual_style") or "").strip(),
     }
 
 
@@ -357,6 +359,63 @@ async def render_character_image_prompt(
     return success_response(RenderedPromptResponse(prompt=derived.prompt, images=derived.images))
 
 
+class CharacterSheetTaskRequest(BaseModel):
+    """角色设定图生成请求体。"""
+
+    model_id: str | None = Field(None, description="可选模型 ID；不传则使用默认图片模型")
+    images: list[str] = Field(
+        default_factory=list,
+        description="额外参考图 file_id 列表（可不传，系统会自动注入演员/服装正面图）",
+    )
+
+
+@router.post(
+    "/characters/{character_id}/sheet-tasks",
+    response_model=ApiResponse[TaskCreated],
+    status_code=status.HTTP_201_CREATED,
+    summary="角色设定图生成任务",
+)
+async def create_character_sheet_generation_task(
+    character_id: str,
+    body: CharacterSheetTaskRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[TaskCreated]:
+    """为角色生成多角度设定图，存入 view_angle=DETAIL / quality_level=ULTRA 槽位。
+
+    设定图生成后会被分镜帧参考图选取逻辑自动优先选用，用于提升跨镜头角色一致性。
+    """
+    base = await _build_character_sheet_base_draft_service(db, character_id=character_id)
+    # 合并系统自动注入的参考图与用户额外传入的参考图
+    merged_file_ids = list(dict.fromkeys([*base.default_images, *body.images]))
+    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=merged_file_ids)
+    task_id = await _create_image_task_and_link_service(
+        db=db,
+        model_id=body.model_id,
+        relation_type="character_sheet",
+        relation_entity_id=character_id,
+        prompt=base.prompt,
+        images=ref_images if ref_images else None,
+    )
+    return created_response(TaskCreated(task_id=task_id))
+
+
+@router.post(
+    "/characters/{character_id}/sheet-render-prompt",
+    response_model=ApiResponse[RenderedPromptResponse],
+    status_code=status.HTTP_200_OK,
+    summary="角色设定图提示词预览",
+)
+async def render_character_sheet_prompt(
+    character_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[RenderedPromptResponse]:
+    """预览角色设定图的提示词和参考图，不创建生成任务。"""
+    base = await _build_character_sheet_base_draft_service(db, character_id=character_id)
+    context = _build_asset_image_context_service(base=base)
+    derived = _derive_asset_image_preview_service(base=base, context=context)
+    return success_response(RenderedPromptResponse(prompt=derived.prompt, images=derived.images))
+
+
 @router.post(
     "/shot/{shot_id}/frame-image-tasks",
     response_model=ApiResponse[TaskCreated],
@@ -392,6 +451,7 @@ async def create_shot_frame_image_generation_task(
         frame_specific_guidance=render_guidance["frame_specific_guidance"],
         composition_anchor=render_guidance["composition_anchor"],
         screen_direction_guidance=render_guidance["screen_direction_guidance"],
+        visual_style=render_guidance.get("visual_style", ""),
     )
     context = _build_frame_context_service(
         shot_id=shot_id,
@@ -477,6 +537,7 @@ async def render_shot_frame_prompt(
         frame_specific_guidance=render_guidance["frame_specific_guidance"],
         composition_anchor=render_guidance["composition_anchor"],
         screen_direction_guidance=render_guidance["screen_direction_guidance"],
+        visual_style=render_guidance.get("visual_style", ""),
     )
     context = _build_frame_context_service(
         shot_id=shot_id,

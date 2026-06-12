@@ -17,6 +17,9 @@ from app.core.tasks import VideoGenerationTask
 from app.models.llm import Model, ModelCategoryKey, ModelSettings
 from app.models.task_links import GenerationTaskLink
 from app.models.studio import FileItem, Shot, ShotDetail, ShotFrameType
+from app.models.studio_shots import ShotCharacterLink
+from app.models.studio_assets import Character
+from app.models.studio_asset_images import ActorImage
 from app.models.types import FileUsageKind
 from app.services.common import entity_not_found
 from app.services.llm.provider_resolver import resolve_provider_config_by_model
@@ -124,6 +127,7 @@ async def load_provider_config_by_model(db: AsyncSession, model: Model) -> Provi
         provider=resolved.provider_key,  # type: ignore[arg-type]
         api_key=resolved.api_key,
         base_url=resolved.base_url,
+        api_secret=resolved.api_secret,
     )
 
 
@@ -174,20 +178,48 @@ async def build_run_args(
     frame_data_urls = [await file_id_to_data_url(db, file_id=file_id) for file_id in submission.images]
     frame_map = {ft: frame_data_urls[i] for i, ft in enumerate(required_frames)}
 
+    # 查询该镜头关联角色的演员头像，作为人脸参考图传给视频生成模型
+    char_links = (await db.execute(
+        select(ShotCharacterLink.character_id).where(ShotCharacterLink.shot_id == shot_id)
+    )).scalars().all()
+    character_references: list[str] = []
+    for char_id in char_links:
+        char = await db.get(Character, char_id)
+        if char and char.actor_id:
+            actor_imgs = (await db.execute(
+                select(ActorImage.file_id).where(
+                    ActorImage.actor_id == char.actor_id,
+                    ActorImage.file_id.is_not(None),
+                ).limit(1)
+            )).scalars().all()
+            for fid in actor_imgs:
+                try:
+                    data_url = await file_id_to_data_url(db, file_id=fid)
+                    character_references.append(data_url)
+                except Exception:  # noqa: BLE001
+                    pass
+
+    input_dict: dict = {
+        "prompt": final_prompt,
+        "first_frame_base64": frame_map.get(ShotFrameType.first),
+        "last_frame_base64": frame_map.get(ShotFrameType.last),
+        "key_frame_base64": frame_map.get(ShotFrameType.key),
+        "model": model.name,
+        "ratio": resolved_ratio,
+        "seconds": shot_detail.duration,
+    }
+    if character_references:
+        input_dict["character_references"] = character_references
+    if shot_detail.camera_movement:
+        input_dict["camera_movement"] = str(shot_detail.camera_movement.value if hasattr(shot_detail.camera_movement, 'value') else shot_detail.camera_movement)
+
     run_args = {
         "shot_id": shot_id,
         "provider": provider_cfg.provider,
         "api_key": provider_cfg.api_key,
+        "api_secret": provider_cfg.api_secret,
         "base_url": provider_cfg.base_url,
-        "input": {
-            "prompt": final_prompt,
-            "first_frame_base64": frame_map.get(ShotFrameType.first),
-            "last_frame_base64": frame_map.get(ShotFrameType.last),
-            "key_frame_base64": frame_map.get(ShotFrameType.key),
-            "model": model.name,
-            "ratio": resolved_ratio,
-            "seconds": shot_detail.duration,
-        },
+        "input": input_dict,
     }
     prompt_preview_payload = submission.extra.get("prompt_preview")
     if isinstance(prompt_preview_payload, dict):
@@ -267,6 +299,7 @@ async def run_video_generation_task(
 
             provider = str(run_args.get("provider") or "")
             api_key = str(run_args.get("api_key") or "")
+            api_secret = run_args.get("api_secret") or None
             base_url = run_args.get("base_url")
             input_dict = dict(run_args.get("input") or {})
 
@@ -275,8 +308,10 @@ async def run_video_generation_task(
                     provider=provider,  # type: ignore[arg-type]
                     api_key=api_key,
                     base_url=base_url,
+                    api_secret=api_secret,
                 ),
                 input_=VideoGenerationInput.model_validate(input_dict),
+                timeout_s=7200.0,
             )
             await task.run()
             result = await task.get_result()
@@ -285,7 +320,17 @@ async def run_video_generation_task(
                 detailed_error = ""
                 if isinstance(status_dict, dict):
                     detailed_error = str(status_dict.get("error") or "")
-                msg = detailed_error or "Video generation task returned no result"
+                import logging as _logging
+                _logging.getLogger(__name__).error(
+                    "video_generation no result: provider=%r status=%r error=%r",
+                    provider, status_dict, detailed_error,
+                )
+                # 简化 httpx 错误信息：只保留第一行（状态码），去掉 MDN 链接
+                if detailed_error:
+                    first_line = detailed_error.splitlines()[0].strip()
+                    msg = first_line or detailed_error
+                else:
+                    msg = "视频生成任务未返回结果"
                 raise RuntimeError(msg)
             if await cancel_if_requested_async(store=store, task_id=task_id, session=session):
                 log_task_event("video_generation", task_id, "cancelled", stage="after_execute")

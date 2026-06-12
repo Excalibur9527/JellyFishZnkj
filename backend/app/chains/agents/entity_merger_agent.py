@@ -18,7 +18,7 @@ _ENTITY_MERGER_SYSTEM_PROMPT = """\
 - 地点（type=location）：尽量补充 location_type
 - 道具（type=prop）：尽量补充 category、owner_character_id
 variants 使用 {variant_key, description, affected_shots, evidence} 的最小结构。
-当提供 previous_merge_json 与 conflict_resolutions_json 时，表示这是一次“重试合并”：你必须参考上一次的合并结果与冲突解决建议，优先消解 conflicts；必要时可调整实体合并/拆分策略，但要保持 ID 尽量稳定（除非建议明确要求变更）。
+当提供 previous_merge_json 与 conflict_resolutions_json 时，表示这是一次\"重试合并\"：你必须参考上一次的合并结果与冲突解决建议，优先消解 conflicts；必要时可调整实体合并/拆分策略，但要保持 ID 尽量稳定（除非建议明确要求变更）。
 只输出 JSON，符合 EntityMergeResult 结构。
 """
 

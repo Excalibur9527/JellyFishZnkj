@@ -71,8 +71,14 @@ def _build_character_context(characters: list[Character]) -> str:
     lines: list[str] = []
     for character in characters:
         fragments: list[str] = []
-        if _compact_text(character.description):
+
+        # 优先使用视觉指纹（AI 优化的外貌锚点），有则替代普通描述
+        fingerprint = _compact_text(getattr(character, "visual_fingerprint", None))
+        if fingerprint:
+            fragments.append(f"外貌锚点：{fingerprint}")
+        elif _compact_text(character.description):
             fragments.append(_compact_text(character.description))
+
         actor = getattr(character, "actor", None)
         if actor is not None and _compact_text(getattr(actor, "name", None)):
             actor_desc = f"演员形象：{_compact_text(getattr(actor, 'name', None))}"
@@ -741,6 +747,7 @@ async def build_run_args(
             "scene_context": _build_named_asset_context(scenes),
             "prop_context": _build_named_asset_context(props),
             "costume_context": _build_named_asset_context(costumes),
+            "character_emotions": list(getattr(shot, "character_emotions", None) or []),
             "subject_priority": _build_subject_priority(
                 characters=characters,
                 scenes=scenes,

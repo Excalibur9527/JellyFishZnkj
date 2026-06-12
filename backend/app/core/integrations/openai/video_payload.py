@@ -29,6 +29,14 @@ def pick_input_reference(input_: VideoGenerationInput) -> dict[str, str] | None:
 
 
 def build_create_video_body(input_: VideoGenerationInput) -> dict[str, Any]:
+    import logging as _log
+    _log.getLogger(__name__).info(
+        "build_create_video_body: model=%r first_frame=%s last_frame=%s key_frame=%s",
+        input_.model,
+        "SET" if input_.first_frame_base64 else "NONE",
+        "SET" if input_.last_frame_base64 else "NONE",
+        "SET" if input_.key_frame_base64 else "NONE",
+    )
     validate_openai_video_options(input_)
     body: dict[str, Any] = {"prompt": input_.prompt or ""}
     if input_.model:
@@ -48,5 +56,22 @@ def build_create_video_body(input_: VideoGenerationInput) -> dict[str, Any]:
 
     ref = pick_input_reference(input_)
     if ref:
-        body["input_reference"] = ref
+        # 标准 OpenAI 格式
+        body["input_reference"] = ref.get("image_url") or ref
+
+    # ── Bailian/DashScope 兼容格式（阿里百炼系列模型通过代理时需要）──
+    # 同时发 input/parameters 字段，代理会用它能识别的那套
+    input_media = (ref or {}).get("image_url") if ref else None
+    body["input"] = {
+        "text": input_.prompt or "",
+        **({"media": input_media} if input_media else {}),
+    }
+    # resolution: 优先 size，否则按比例推断
+    ratio = (input_.ratio or "16:9").strip()
+    resolution = "720P"  # 默认 720P；如需 1080P 可在模型参数里配置
+    body["parameters"] = {
+        "resolution": resolution,
+        **({"duration": int(input_.seconds)} if input_.seconds is not None else {}),
+    }
+
     return body

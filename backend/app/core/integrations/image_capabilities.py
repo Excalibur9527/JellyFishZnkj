@@ -8,14 +8,14 @@ from app.core.contracts.image_generation import ImageGenerationInput
 from app.core.contracts.provider import ProviderKey
 
 DEFAULT_VIDEO_REFERENCE_RATIO_SIZE_MAP: dict[str, dict[str, str]] = {
-    "16:9": {"standard": "1792x1024", "high": "2048x1152"},
+    "16:9": {"standard": "1536x1024", "high": "1536x1024"},
     "4:3": {"standard": "1536x1152", "high": "2048x1536"},
-    "1:1": {"standard": "1024x1024", "high": "1536x1536"},
-    "3:2": {"standard": "1536x1024", "high": "2048x1365"},
-    "2:3": {"standard": "1024x1536", "high": "1365x2048"},
-    "3:4": {"standard": "1152x1536", "high": "1536x2048"},
-    "9:16": {"standard": "1024x1792", "high": "1152x2048"},
-    "21:9": {"standard": "2048x896", "high": "2304x1024"},
+    "1:1": {"standard": "1024x1024", "high": "1024x1024"},
+    "3:2": {"standard": "1536x1024", "high": "1536x1024"},
+    "2:3": {"standard": "1024x1536", "high": "1024x1536"},
+    "3:4": {"standard": "1152x1536", "high": "1024x1536"},
+    "9:16": {"standard": "1024x1536", "high": "1024x1536"},
+    "21:9": {"standard": "1536x1024", "high": "1536x1024"},
 }
 
 

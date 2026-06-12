@@ -43,6 +43,11 @@ def register_video_model_capability(
 
         register_openai_video_capability(model_prefix=model_prefix, capability=capability)
         return
+    if provider == "kling":
+        from app.core.integrations.kling.video_capabilities import register_kling_video_capability
+
+        register_kling_video_capability(model_prefix=model_prefix, capability=capability)
+        return
     from app.core.integrations.volcengine.video_capabilities import register_volcengine_video_capability
 
     register_volcengine_video_capability(model_prefix=model_prefix, capability=capability)
@@ -52,13 +57,18 @@ def clear_video_model_capability_overrides(*, provider: ProviderKey | None = Non
     """兼容入口：清空能力覆盖；供测试或重置场景使用。"""
     from app.core.integrations.openai.video_capabilities import clear_openai_video_capability_overrides
     from app.core.integrations.volcengine.video_capabilities import clear_volcengine_video_capability_overrides
+    from app.core.integrations.kling.video_capabilities import clear_kling_video_capability_overrides
 
     if provider is None:
         clear_openai_video_capability_overrides()
         clear_volcengine_video_capability_overrides()
+        clear_kling_video_capability_overrides()
         return
     if provider == "openai":
         clear_openai_video_capability_overrides()
+        return
+    if provider == "kling":
+        clear_kling_video_capability_overrides()
         return
     clear_volcengine_video_capability_overrides()
 
@@ -68,6 +78,28 @@ def resolve_video_capability(*, provider: ProviderKey, model: str | None) -> Vid
         from app.core.integrations.openai.video_capabilities import resolve_openai_video_capability
 
         return resolve_openai_video_capability(model)
+    if provider == "kling":
+        from app.core.integrations.kling.video_capabilities import resolve_kling_video_capability
+
+        return resolve_kling_video_capability(model)
+    if provider == "kling_proxy":
+        return VideoModelCapability(
+            supports_seed=False,
+            supports_watermark=False,
+            allowed_ratios={"16:9", "9:16", "1:1"},
+            default_ratio="16:9",
+            min_seconds=5,
+            max_seconds=10,
+        )
+    if provider == "bailian":
+        return VideoModelCapability(
+            supports_seed=False,
+            supports_watermark=False,
+            allowed_ratios={"16:9", "9:16", "1:1"},
+            default_ratio="16:9",
+            min_seconds=5,
+            max_seconds=10,
+        )
     from app.core.integrations.volcengine.video_capabilities import resolve_volcengine_video_capability
 
     return resolve_volcengine_video_capability(model)

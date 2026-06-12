@@ -9,24 +9,30 @@ from langchain_core.prompts import PromptTemplate
 from app.chains.agents.base import AgentBase
 from app.schemas.skills.character_portrait import CharacterPortraitAnalysisResult
 
-_CHARACTER_PORTRAIT_SYSTEM_PROMPT = """\
-你是\"人物画像分析师\"。你的任务是：当给定一份“原文人物描述”时，判断其中缺少哪些关键信息，导致无法生成合理的人物画像（外貌/服装造型/气质/性格倾向/年龄感/显著标志特征/背景或动机线索等）。
-
-要求：
-- 输出必须严格服务于“可直接用于AI图像生成”的目的，optimized_description 需是一段连贯、正面、画面感强的描述。
-- 原文仅作参照：只能在原文已明确给出的内容基础上进行顺滑连接或不改变原意的重排，不能修改、替换或弱化原文中的任何人物信息（年龄、性别、外貌特征、性格描述等）。
-- 当原文信息不足时，进行合理的保守补全式扩展，使 optimized_description 至少覆盖以下维度：年龄、性别、性格倾向、外貌（面部特征、体态、肤质、发型等）、服装造型、气质、显著标志特征，并可适度加入背景或动机线索（需与整体画像目标一致）。
-- issues：列出原文真正缺失的关键维度或存在的歧义点，并具体说明这些缺失如何影响画像生成的一致性、视觉完整性或人物生动感。
-- optimized_description：在尽量保留原文原词原意的基础上，完整保留所有明确信息，并通过正面肯定句式补全缺失部分，形成一段可直接复制用于AI图像生成模型的完整人物描述。
-
-禁止项（严格执行）：
-- optimized_description 中绝对不允许出现“未被详细说明”“信息不详”“未知”“不明确”“假设”“比如”“可以设想”“类似”“通常”“可能”“大概”等任何模糊、不稳定、占位或推测性词语。
-- 所有描述必须使用肯定、具体的正面语言，直接给出可视觉化的细节。
-- issues 中只分析缺失或歧义，不在 optimized_description 中重复提及缺少的内容。
-- 若原文已足够完整，issues 可为空或极简，optimized_description 仍需做结构化顺滑表达，但不得添加原文未暗示的关键事实。
-
-只输出 JSON，符合 CharacterPortraitAnalysisResult 结构。
-"""
+_CHARACTER_PORTRAIT_SYSTEM_PROMPT = (
+    "你是\"人物画像分析师\"。你的任务是：当给定一份\"原文人物描述\"时，判断其中缺少哪些关键信息，"
+    "导致无法生成合理的人物画像（外貌/服装造型/气质/性格倾向/年龄感/显著标志特征/背景或动机线索等）。\n\n"
+    "要求：\n"
+    "- 输出必须严格服务于\"可直接用于AI图像生成\"的目的，optimized_description 需是一段连贯、正面、画面感强的描述。\n"
+    "- 原文仅作参照：只能在原文已明确给出的内容基础上进行顺滑连接或不改变原意的重排，不能修改、替换或弱化原文中的任何人物信息（年龄、性别、外貌特征、性格描述等）。\n"
+    "- 当原文信息不足时，进行合理的保守补全式扩展，使 optimized_description 至少覆盖以下维度："
+    "年龄、性别、性格倾向、外貌（面部特征、体态、肤质、发型等）、服装造型、气质、显著标志特征，"
+    "并可适度加入背景或动机线索（需与整体画像目标一致）。\n"
+    "- issues：列出原文真正缺失的关键维度或存在的歧义点，并具体说明这些缺失如何影响画像生成的一致性、视觉完整性或人物生动感。\n"
+    "- optimized_description：在尽量保留原文原词原意的基础上，完整保留所有明确信息，并通过正面肯定句式补全缺失部分，"
+    "形成一段可直接复制用于AI图像生成模型的完整人物描述。\n"
+    "- visual_fingerprint：从 optimized_description 中提炼 30~60 字的精华外貌标签，格式固定为逗号分隔的关键词串，"
+    "严格按以下顺序：「脸型，五官特征，发型发色，肤色，体型身高感，服装颜色与材质关键词」。"
+    "这段标签将在每一个镜头提示词中原样复用，必须做到无歧义、无修饰词、纯视觉可描述。\n\n"
+    "禁止项（严格执行）：\n"
+    "- optimized_description 与 visual_fingerprint 中绝对不允许出现\"未被详细说明\"\"信息不详\"\"未知\"\"不明确\""
+    "\"假设\"\"比如\"\"可以设想\"\"类似\"\"通常\"\"可能\"\"大概\"等任何模糊、不稳定、占位或推测性词语。\n"
+    "- 所有描述必须使用肯定、具体的正面语言，直接给出可视觉化的细节。\n"
+    "- visual_fingerprint 中不要出现性格、气质、情绪等非视觉信息，只保留可被图像模型识别的外观关键词。\n"
+    "- issues 中只分析缺失或歧义，不在 optimized_description 中重复提及缺少的内容。\n"
+    "- 若原文已足够完整，issues 可为空或极简，optimized_description 仍需做结构化顺滑表达，但不得添加原文未暗示的关键事实。\n\n"
+    "只输出 JSON，符合 CharacterPortraitAnalysisResult 结构。"
+)
 
 CHARACTER_PORTRAIT_PROMPT = PromptTemplate(
     input_variables=["character_context", "character_description"],
@@ -78,8 +84,8 @@ class CharacterPortraitAnalysisAgent(AgentBase[CharacterPortraitAnalysisResult])
         if "optimized_description" not in data:
             data["optimized_description"] = ""
 
-        # 兜底清理：若模型把“信息不详/未知”等占位句写进 optimized_description，
-        # 则移除这些句子，避免影响后续“可生成画像”的正向描述质量。
+        # 兜底清理：若模型把"信息不详/未知"等占位句写进 optimized_description，
+        # 则移除这些句子，避免影响后续"可生成画像"的正向描述质量。
         optimized = data.get("optimized_description") or ""
         if isinstance(optimized, str) and optimized:
             fuzzy_markers = (
@@ -108,4 +114,3 @@ class CharacterPortraitAnalysisAgent(AgentBase[CharacterPortraitAnalysisResult])
                 data["optimized_description"] = cleaned or optimized
 
         return data
-

@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.studio import Chapter, PromptCategory, PromptTemplate, Shot, ShotDetail
+from app.models.studio import Chapter, Character, PromptCategory, PromptTemplate, Shot, ShotDetail
 from app.schemas.studio.shots import (
     ActionBeatPhaseRead,
     ShotPromptAssetRef,
@@ -34,6 +34,12 @@ from app.services.studio.shot_assets_overview import get_shot_assets_overview
 DEFAULT_VIDEO_NEGATIVE_PROMPT = (
     "不要新增无关人物；不要改变角色身份、服装颜色和场景地点；"
     "不要出现文字水印、肢体畸形、镜头跳变和画面闪烁。"
+)
+
+DEFAULT_VIDEO_ORIGINALITY_SAFETY_PROMPT = (
+    "原创角色约束：人物为原创虚构角色，严格保持参考图中人物的面部特征、发型发色、肤色、体型和服装细节；"
+    "跨镜头同名角色必须保持外貌完全一致，不得漂移；"
+    "画面中不出现品牌标识、文字水印或可识别商标；不模仿任何真实个人、明星或版权角色。"
 )
 
 
@@ -116,6 +122,21 @@ def _build_guidance_suffix(pack: ShotVideoPromptPackRead) -> str:
     if pack.screen_direction_guidance:
         lines.append(f"朝向与视线：{pack.screen_direction_guidance}")
     return "\n".join(lines).strip()
+
+
+def append_video_originality_safety_prompt(rendered_prompt: str) -> str:
+    """为视频最终提示词追加轻量原创性约束。
+
+    该约束放在最终视频 prompt 层，确保模板、手写 prompt 与预览/提交链路同源；
+    内容只限制真实人物/版权角色相似风险，不削弱人物设定、镜头语言和画面质量目标。
+    """
+    text = str(rendered_prompt or "").strip()
+    normalized = text.replace(" ", "")
+    if "原创角色约束" in normalized or "原创虚构角色" in normalized:
+        return text
+    if not text:
+        return DEFAULT_VIDEO_ORIGINALITY_SAFETY_PROMPT
+    return f"{text}\n\n{DEFAULT_VIDEO_ORIGINALITY_SAFETY_PROMPT}".strip()
 
 
 def enrich_rendered_video_prompt(
@@ -232,11 +253,14 @@ def _build_continuity_guidance(
     current_shot: Shot,
     previous_shot: Shot | None,
     next_shot: Shot | None,
+    character_identity_guidance: str = "",
 ) -> str:
     """构造视频提示词的连续性建议。"""
     detail = getattr(current_shot, "detail", None)
     current_scene_id = str(getattr(detail, "scene_id", "") or "")
     tips: list[str] = []
+    if character_identity_guidance:
+        tips.append(character_identity_guidance)
     if previous_shot is not None:
         tips.append("承接上一镜头的动作、视线或情绪，不要像新场景重新开局")
         previous_detail = getattr(previous_shot, "detail", None)
@@ -250,6 +274,80 @@ def _build_continuity_guidance(
         if current_scene_id and next_scene_id and current_scene_id == next_scene_id:
             tips.append("与下一镜头同场景时保持视觉重心连续，避免突兀跳轴")
     return "；".join(tips)
+
+
+def _extract_inline_character_descriptions(*texts: str) -> dict[str, str]:
+    """从剧本文本中提取 `姓名（描述）` 形式的人物身份锚点。
+
+    文生视频在无参考图模式下很依赖文字锚点；这里只抽取剧本中已有的人物设定，
+    避免引入额外生成信息导致角色反而漂移。
+    """
+    descriptions: dict[str, str] = {}
+    pattern = re.compile(r"([\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z0-9·]{0,12})[（(]([^（）()]{2,80})[）)]")
+    for text in texts:
+        for match in pattern.finditer(str(text or "")):
+            name = match.group(1).strip()
+            desc = match.group(2).strip()
+            if name and desc and name not in descriptions:
+                descriptions[name] = desc
+    return descriptions
+
+
+def _build_character_identity_guidance(
+    *,
+    current_shot: Shot,
+    previous_shot: Shot | None,
+    next_shot: Shot | None,
+    project_characters: list[Character],
+    linked_characters: list[ShotPromptAssetRef],
+) -> str:
+    """构造跨镜头人物身份锚点，降低 text-only 视频生成的人物漂移。
+
+    角色来源优先使用已确认的角色/剧本文字，其次使用项目角色库描述；
+    输出只进入 prompt，不改变镜头资产绑定关系。
+    """
+    texts = [
+        str(getattr(previous_shot, "script_excerpt", "") or ""),
+        str(getattr(current_shot, "script_excerpt", "") or ""),
+        str(getattr(next_shot, "script_excerpt", "") or ""),
+    ]
+    mentioned_text = "\n".join(texts)
+    inline_descriptions = _extract_inline_character_descriptions(*texts)
+    anchors: list[str] = []
+    seen: set[str] = set()
+
+    def add_anchor(name: str, description: str = "") -> None:
+        normalized_name = str(name or "").strip()
+        normalized_description = str(description or "").strip()
+        if not normalized_name or normalized_name in seen:
+            return
+        seen.add(normalized_name)
+        anchors.append(
+            f"{normalized_name}={normalized_description}"
+            if normalized_description
+            else normalized_name
+        )
+
+    for item in linked_characters:
+        add_anchor(item.name, item.description)
+
+    for name, description in inline_descriptions.items():
+        add_anchor(name, description)
+
+    for character in project_characters:
+        name = str(character.name or "").strip()
+        if not name or name not in mentioned_text:
+            continue
+        add_anchor(name, str(character.description or ""))
+
+    if not anchors:
+        return ""
+
+    return (
+        f"角色身份锚点：{'；'.join(anchors[:4])}。"
+        "同名角色在相邻镜头中必须保持同一身份、年龄感、发型、服装和气质；"
+        "新入画角色只能作为新增角色进入画面，不要替代上一镜头主体。"
+    )
 
 
 def _build_composition_anchor(
@@ -413,6 +511,20 @@ async def build_shot_video_prompt_pack(
     neighbor_rows = (await db.execute(neighbors_stmt)).scalars().all()
     previous_shot = next((item for item in neighbor_rows if item.index == shot.index - 1), None)
     next_shot = next((item for item in neighbor_rows if item.index == shot.index + 1), None)
+    project_characters: list[Character] = []
+    project_id = str(getattr(project, "id", "") or "")
+    if project_id:
+        project_characters = (
+            (
+                await db.execute(
+                    select(Character)
+                    .where(Character.project_id == project_id)
+                    .order_by(Character.updated_at.desc(), Character.id.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
 
     characters: list[ShotPromptAssetRef] = []
     props: list[ShotPromptAssetRef] = []
@@ -461,6 +573,13 @@ async def build_shot_video_prompt_pack(
             current_shot=shot,
             previous_shot=previous_shot,
             next_shot=next_shot,
+            character_identity_guidance=_build_character_identity_guidance(
+                current_shot=shot,
+                previous_shot=previous_shot,
+                next_shot=next_shot,
+                project_characters=project_characters,
+                linked_characters=characters,
+            ),
         ),
         composition_anchor=_build_composition_anchor(
             shot=shot,

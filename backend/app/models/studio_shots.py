@@ -60,6 +60,12 @@ class Shot(Base,TimestampMixin):
         comment="最近一次完成信息提取的时间；用于区分未提取与提取结果为空",
     )
     script_excerpt: Mapped[str] = mapped_column(Text, nullable=False, default="", comment="剧本摘录")
+    character_emotions: Mapped[list | None] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+        comment="分镜时推断的各角色情绪与微表情，格式：[{character_name, emotion, intensity, expression_hint}]",
+    )
     generated_video_file_id: Mapped[str | None] = mapped_column(
         String(64),
         ForeignKey("files.id", ondelete="SET NULL"),

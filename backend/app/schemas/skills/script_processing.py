@@ -14,6 +14,17 @@ from app.schemas.skills.film import Character, Location, Prop, Scene, ProjectCin
 SceneTimeLoose = Literal["DAY", "NIGHT", "DAWN", "DUSK", "UNKNOWN", "日", "夜", "黎明", "黄昏", "不明", "未知"]
 
 
+class CharacterEmotion(BaseModel):
+    """单镜中单个角色的情绪与微表情推断。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    character_name: str = Field(..., description="角色名")
+    emotion: str = Field("", description="主情绪标签，如：悲伤、愤怒、惊恐、喜悦、平静、紧张、羞耻、绝望")
+    intensity: str = Field("", description="情绪强度：轻微 / 明显 / 强烈")
+    expression_hint: str = Field("", description="具体微表情描述，如：眉头紧皱、眼眶泛红、嘴唇微颤、目光涣散")
+
+
 class ShotDivision(BaseModel):
     """剧本分镜中的单镜信息：行号 + 预览文本（可选弱语义）。"""
 
@@ -26,6 +37,10 @@ class ShotDivision(BaseModel):
 
     shot_name: str = Field("", description="镜头名称（分镜名/镜头标题）")
     time_of_day: Optional[SceneTimeLoose] = Field(None, description="时间（日/夜/未知等，可选）")
+    character_emotions: List[CharacterEmotion] = Field(
+        ...,
+        description="本镜各出场角色的情绪与微表情推断，若无出场角色则传空列表 []",
+    )
 
 
 class ScriptDivisionResult(BaseModel):

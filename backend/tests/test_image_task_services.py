@@ -328,7 +328,35 @@ def test_derive_frame_preview_replaces_reference_names_with_stable_order() -> No
     assert "连续性要求：当前镜头应承接上一镜头的动作与情绪，不要像全新场面重新开局" in preview.rendered_prompt
     assert "构图锚点：以门口灯光和主角站位作为画面重心，保持环境与人物同时可读" not in preview.rendered_prompt
     assert "朝向与视线：保持张三与李四的左右站位和对视方向稳定，避免无故翻转朝向" not in preview.rendered_prompt
+    assert "人物面部约束：如画面中有人物，必须保留清晰可辨的原创虚构人脸和完整自然五官" in preview.rendered_prompt
+    assert "不要生成无脸、遮脸、背影替代、面部模糊或五官缺失" in preview.rendered_prompt
+    assert "高质量影视概念参考图" in preview.rendered_prompt
+    assert "避免真实摄影照片、街拍、证件照或真人抓拍质感" in preview.rendered_prompt
+    assert "不要模仿任何真实个人、明星、公众人物或版权角色" in preview.rendered_prompt
     assert "图1在雨夜中逼近图2" in preview.rendered_prompt
+
+
+def test_derive_frame_preview_does_not_add_face_prompt_for_scene_only_frame() -> None:
+    base = build_frame_base_draft(
+        shot_id="shot-scene",
+        frame_type=ShotFrameType.first,
+        prompt="空旷大厅的清晨光线穿过玻璃天窗",
+        director_command_summary="必须：先建立空间",
+        continuity_guidance="",
+        frame_specific_guidance="首帧优先表现空间关系",
+        composition_anchor="以大厅纵深作为空间锚点",
+        screen_direction_guidance="",
+    )
+    context = build_frame_context(
+        shot_id="shot-scene",
+        frame_type=ShotFrameType.first,
+        items=[],
+    )
+
+    preview = derive_frame_preview(base=base, context=context)
+
+    assert "空旷大厅的清晨光线" in preview.rendered_prompt
+    assert "人物面部约束" not in preview.rendered_prompt
 
 
 def test_derive_frame_preview_prioritizes_composition_for_first_frame() -> None:

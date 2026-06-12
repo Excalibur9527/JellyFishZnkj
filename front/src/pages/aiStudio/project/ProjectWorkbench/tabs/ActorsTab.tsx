@@ -40,14 +40,27 @@ export function ActorsTab() {
 
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(12)
+
+  const uniqueLinks = useMemo(() => {
+    const seen = new Map<string, ProjectActorLinkRead & { allLinkIds: number[] }>()
+    for (const l of links) {
+      if (seen.has(l.actor_id)) {
+        seen.get(l.actor_id)!.allLinkIds.push(l.id)
+      } else {
+        seen.set(l.actor_id, { ...l, allLinkIds: [l.id] })
+      }
+    }
+    return Array.from(seen.values())
+  }, [links])
+
   const pagedLinks = useMemo(() => {
     const start = (page - 1) * pageSize
-    return links.slice(start, start + pageSize)
-  }, [links, page, pageSize])
+    return uniqueLinks.slice(start, start + pageSize)
+  }, [uniqueLinks, page, pageSize])
 
   useEffect(() => {
     setPage(1)
-  }, [links.length])
+  }, [uniqueLinks.length])
 
   const loadLinks = async () => {
     if (!projectId) return
@@ -129,10 +142,14 @@ export function ActorsTab() {
     }
   }
 
-  const handleUnlinkActor = async (link: ProjectActorLinkRead) => {
+  const handleUnlinkActor = async (link: ProjectActorLinkRead & { allLinkIds: number[] }) => {
     setUnlinkingId(link.id)
     try {
-      await StudioShotLinksService.deleteProjectActorLinkApiV1StudioShotLinksActorLinkIdDelete({ linkId: link.id })
+      await Promise.all(
+        link.allLinkIds.map((id) =>
+          StudioShotLinksService.deleteProjectActorLinkApiV1StudioShotLinksActorLinkIdDelete({ linkId: id }),
+        ),
+      )
       message.success('已取消关联')
       await loadLinks()
     } catch {
@@ -206,7 +223,7 @@ export function ActorsTab() {
           </Space>
         }
       >
-        {links.length === 0 && !linksLoading ? (
+        {uniqueLinks.length === 0 && !linksLoading ? (
           <Empty description="暂无项目演员，可从资产库关联演员到本项目" image={Empty.PRESENTED_IMAGE_SIMPLE}>
             <Space>
               <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
@@ -232,7 +249,7 @@ export function ActorsTab() {
               const a = linkedByActorId.get(l.actor_id)
               return (
                 <DisplayImageCard
-                  key={l.id}
+                  key={l.actor_id}
                   title={<div className="truncate">{a?.name ?? l.actor_id}</div>}
                   imageUrl={resolveAssetUrl(a?.thumbnail)}
                   imageAlt={a?.name ?? l.actor_id}
@@ -282,7 +299,7 @@ export function ActorsTab() {
               <Pagination
                 current={page}
                 pageSize={pageSize}
-                total={links.length}
+                total={uniqueLinks.length}
                 showSizeChanger={false}
                 showTotal={(t) => `共 ${t} 条`}
                 onChange={(p, ps) => {

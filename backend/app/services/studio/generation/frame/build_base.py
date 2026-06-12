@@ -16,6 +16,7 @@ class FrameBaseDraft(GenerationBaseDraft):
     frame_specific_guidance: str = ""
     composition_anchor: str = ""
     screen_direction_guidance: str = ""
+    visual_style: str = ""
 
 
 def build_frame_base_draft(
@@ -28,6 +29,7 @@ def build_frame_base_draft(
     frame_specific_guidance: str = "",
     composition_anchor: str = "",
     screen_direction_guidance: str = "",
+    visual_style: str = "",
 ) -> FrameBaseDraft:
     """构造分镜帧基础草稿，并附带最终渲染阶段仍需保留的高优先级约束。"""
     return FrameBaseDraft(
@@ -39,4 +41,5 @@ def build_frame_base_draft(
         frame_specific_guidance=(frame_specific_guidance or "").strip(),
         composition_anchor=(composition_anchor or "").strip(),
         screen_direction_guidance=(screen_direction_guidance or "").strip(),
+        visual_style=(visual_style or "").strip(),
     )

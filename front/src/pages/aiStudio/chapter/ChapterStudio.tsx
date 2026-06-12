@@ -2492,7 +2492,10 @@ const ChapterStudio: React.FC = () => {
             <div className="flex-1 min-h-0 overflow-auto flex flex-col gap-8 pr-1">
               <div className="relative">
                 <div className="cs-player-shell">
-                  <div className="aspect-video bg-black rounded overflow-hidden flex items-center justify-center">
+                  <div
+                    className="bg-black rounded overflow-hidden flex items-center justify-center"
+                    style={{ aspectRatio: (() => { const r = resolveShotVideoRatio(shotDetail); const parts = r.split(':'); return parts.length === 2 ? `${parts[0]}/${parts[1]}` : '16/9' })() }}
+                  >
                   {/* Mock：没有真实视频源时仍可展示播放器结构 */}
                   <video
                     ref={videoRef}
@@ -2809,10 +2812,7 @@ const ChapterStudio: React.FC = () => {
         <Modal
           title={`批量视频准备度（${selectedShots.length} 条）`}
           open={batchVideoReadinessOpen}
-          onCancel={() => {
-            if (batchVideoReadinessLoading) return
-            setBatchVideoReadinessOpen(false)
-          }}
+          onCancel={() => setBatchVideoReadinessOpen(false)}
           footer={[
             <Button key="close" onClick={() => setBatchVideoReadinessOpen(false)} disabled={batchVideoReadinessLoading}>
               关闭
@@ -3128,7 +3128,57 @@ function Inspector(props: {
   const [promptSettledTask, setPromptSettledTask] = useState<RelationTaskState | null>(null)
   const [frameImageTask, setFrameImageTask] = useState<RelationTaskState | null>(null)
   const [frameImageSettledTask, setFrameImageSettledTask] = useState<RelationTaskState | null>(null)
-  const [generatedVideos, setGeneratedVideos] = useState<Array<{ linkId: number; fileId: string; url: string }>>([])
+  const [generatedVideos, setGeneratedVideos] = useState<Array<{ linkId: number; taskId: string; fileId: string; url: string; status: string }>>([])
+  const [selectedPreviewFileId, setSelectedPreviewFileId] = useState<string | null>(null)
+  const [adoptingVideoTaskId, setAdoptingVideoTaskId] = useState<string | null>(null)
+
+  const adoptVideo = async (taskId: string, shotId: string) => {
+    if (!taskId || !shotId) return
+    setAdoptingVideoTaskId(taskId)
+    try {
+      await FilmService.adoptTaskLinkApiV1FilmTaskLinksAdoptPatch({ requestBody: { task_id: taskId, shot_id: shotId } })
+      // 刷新列表以更新 status
+      setGeneratedVideos((prev) => prev.map((v) => ({
+        ...v,
+        status: v.taskId === taskId ? 'accepted' : (v.status === 'accepted' ? 'todo' : v.status),
+      })))
+      message.success('已采用')
+    } catch {
+      message.error('采用失败')
+    } finally {
+      setAdoptingVideoTaskId(null)
+    }
+  }
+
+  const rejectVideo = async (item: { linkId: number; fileId: string }) => {
+    if (!item.linkId || item.linkId < 0) return
+    setAdoptingVideoTaskId(String(item.linkId))
+    try {
+      await FilmService.updateTaskLinkApiV1FilmTaskLinksLinkIdPatch({
+        linkId: item.linkId,
+        requestBody: { status: 'rejected' },
+      })
+      setGeneratedVideos((prev) => {
+        const next = prev.map((v) => ({
+          ...v,
+          status: v.linkId === item.linkId ? 'rejected' : v.status,
+        }))
+        // 如果废弃的正是当前主预览，切换到第一个非废弃视频
+        if (selectedPreviewFileId === item.fileId || (!selectedPreviewFileId && selectedShot?.generated_video_file_id === item.fileId)) {
+          const fallback = next.find((v) => v.status !== 'rejected')
+          onSelectPreviewVideo(fallback?.fileId ?? '')
+          setSelectedPreviewFileId(fallback?.fileId ?? null)
+        }
+        return next
+      })
+      message.success('已废弃')
+    } catch {
+      message.error('废弃失败')
+    } finally {
+      setAdoptingVideoTaskId(null)
+    }
+  }
+
   const [videoReadiness, setVideoReadiness] = useState<ShotVideoReadinessRead | null>(null)
   const [videoReadinessLoading, setVideoReadinessLoading] = useState(false)
   const [keyframeCards, setKeyframeCards] = useState<Record<PromptFrameType, KeyframeCardState>>({
@@ -3285,8 +3335,10 @@ function Inspector(props: {
   useEffect(() => {
     if (!selectedShot?.id) {
       setGeneratedVideos([])
+      setSelectedPreviewFileId(null)
       return
     }
+    setSelectedPreviewFileId(null)
     let canceled = false
     void (async () => {
       try {
@@ -3301,23 +3353,30 @@ function Inspector(props: {
         })
         if (canceled) return
         const seen = new Set<string>()
+        const adoptedFileId = selectedShot.generated_video_file_id?.trim() || ''
         const list = links
           .filter((l) => Boolean(l.file_id))
-          .map((l) => ({
-            linkId: l.id,
-            fileId: String(l.file_id),
-            url: buildFileDownloadUrl(String(l.file_id)) ?? '',
-          }))
+          .map((l) => {
+            const fid = String(l.file_id)
+            // 以 shot.generated_video_file_id 为唯一"已采用"标准，其余无论 DB 里是什么都标 todo
+            const status = fid === adoptedFileId ? 'accepted' : (l.status === 'rejected' ? 'rejected' : 'todo')
+            return {
+              linkId: l.id,
+              taskId: l.task_id,
+              fileId: fid,
+              url: buildFileDownloadUrl(fid) ?? '',
+              status,
+            }
+          })
           .filter((v) => Boolean(v.url))
           .filter((v) => {
             if (seen.has(v.fileId)) return false
             seen.add(v.fileId)
             return true
           })
-        const currentId = selectedShot.generated_video_file_id?.trim() || ''
-        if (currentId && !list.some((x) => x.fileId === currentId)) {
-          const currentUrl = buildFileDownloadUrl(currentId) ?? ''
-          if (currentUrl) list.unshift({ linkId: -1, fileId: currentId, url: currentUrl })
+        if (adoptedFileId && !list.some((x) => x.fileId === adoptedFileId)) {
+          const currentUrl = buildFileDownloadUrl(adoptedFileId) ?? ''
+          if (currentUrl) list.unshift({ linkId: -1, taskId: '', fileId: adoptedFileId, url: currentUrl, status: 'accepted' })
         }
         setGeneratedVideos(list)
       } catch {
@@ -3982,11 +4041,10 @@ function Inspector(props: {
         const id = String(c?.id ?? '')
         const name = String(c?.name ?? id)
         const thumb = typeof c?.thumbnail === 'string' ? c.thumbnail : ''
-        const disabled = linkedCharacterIds.includes(id)
         return {
           value: id,
           searchLabel: name,
-          disabled,
+          disabled: false,
           label: (
             <div className="flex items-center gap-2 min-w-0">
               {thumb ? (
@@ -4327,7 +4385,7 @@ function Inspector(props: {
     void (async () => {
       try {
         let finalTaskState: RelationTaskState | null = null
-        for (let i = 0; i < 60; i += 1) {
+        for (let i = 0; i < 3600; i += 1) {
           await sleep(2000)
           if (cancelled) return
           const statusRes = await FilmService.getTaskStatusApiV1FilmTasksTaskIdStatusGet({ taskId: videoTaskId })
@@ -4349,6 +4407,15 @@ function Inspector(props: {
         ) {
           setVideoTask(null)
           setVideoSettledTask(finalTaskState)
+          if (finalTaskState.status === 'succeeded' && selectedShot?.id) {
+            const resultRes = await FilmService.getTaskResultApiV1FilmTasksTaskIdResultGet({ taskId: finalTaskState.taskId })
+            if (cancelled) return
+            const result = (resultRes.data?.result ?? null) as Record<string, unknown> | null
+            const fileId = typeof result?.file_id === 'string' ? result.file_id.trim() : ''
+            if (fileId) {
+              onSelectPreviewVideo(fileId)
+            }
+          }
         }
       } catch {
         if (!cancelled) {
@@ -4506,11 +4573,15 @@ function Inspector(props: {
       ) {
         setPromptTask(null)
         setPromptSettledTask(finalTaskState)
+      } else {
+        // 超时退出轮询，清除本地任务状态，任务中心继续追踪
+        setPromptTask(null)
+        setPromptSettledTask(null)
       }
 
       if (finalStatus !== 'succeeded') {
         if (finalStatus !== 'failed' && finalStatus !== 'cancelled') {
-          message.warning('生成任务仍在执行，请稍后重试')
+          message.warning('生成任务仍在执行中，请关注右下角任务中心')
         }
         return
       }
@@ -4631,15 +4702,15 @@ function Inspector(props: {
         cancelRequested: false,
       })
       setFrameImageSettledTask(null)
+      // 任务已提交，立即关闭弹窗，任务中心会继续追踪进度
+      setKeyframePromptPreviewOpen(false)
 
-      let finalStatus = 'pending'
       let finalTaskState: RelationTaskState | null = null
       for (let i = 0; i < 30; i += 1) {
         await sleep(2000)
         const statusRes = await FilmService.getTaskStatusApiV1FilmTasksTaskIdStatusGet({ taskId })
         const status = statusRes.data?.status
         if (!status) continue
-        finalStatus = status
         if (statusRes.data) {
           finalTaskState = toRelationTaskStateFromStatusRead(statusRes.data)
           setFrameImageTask(finalTaskState)
@@ -4655,13 +4726,16 @@ function Inspector(props: {
       ) {
         setFrameImageTask(null)
         setFrameImageSettledTask(finalTaskState)
-      }
-      if (finalStatus === 'succeeded') {
-        const latestSlotId = await getLatestFrameSlotId(frameType)
-        await loadCardThumbs(frameType, latestSlotId, 5)
-        setKeyframePromptPreviewOpen(false)
-      } else if (finalStatus !== 'failed' && finalStatus !== 'cancelled') {
-        message.warning('生成任务仍在执行，请稍后刷新')
+        if (finalTaskState.status === 'succeeded') {
+          await onRefreshShotFrameImages?.()
+          const latestSlotId = await getLatestFrameSlotId(frameType)
+          await loadCardThumbs(frameType, latestSlotId, 5)
+        }
+      } else {
+        // 超时退出轮询，清除本地任务状态，任务中心会继续追踪
+        setFrameImageTask(null)
+        setFrameImageSettledTask(null)
+        message.warning('生成任务仍在执行中，请关注右下角任务中心')
       }
     } catch {
       updateCardState(frameType, { taskStatus: 'failed' })
@@ -4673,7 +4747,17 @@ function Inspector(props: {
   }
 
   const applyCardImage = async (frameType: PromptFrameType, fileId: string) => {
-    const slot = frameImages.find((x) => x.frame_type === frameType)
+    let slot = frameImages.find((x) => x.frame_type === frameType)
+    if (!slot) {
+      const slotId = await getLatestFrameSlotId(frameType)
+      if (slotId) {
+        const res = await StudioShotFrameImagesService.listShotFrameImagesApiV1StudioShotFrameImagesGet({
+          shotDetailId: selectedShot!.id,
+          order: null, isDesc: false, page: 1, pageSize: 100,
+        })
+        slot = (res.data?.items ?? []).find((x: ShotFrameImageRead) => x.frame_type === frameType) ?? undefined
+      }
+    }
     if (!slot) return
     updateCardState(frameType, { applyingFileId: fileId })
     try {
@@ -4681,6 +4765,7 @@ function Inspector(props: {
         imageId: slot.id,
         requestBody: { file_id: fileId } as any,
       })
+      await onRefreshShotFrameImages?.()
       await loadCardThumbs(frameType)
       message.success('已切换使用图片')
     } catch {
@@ -5056,7 +5141,7 @@ function Inspector(props: {
                         <div className="cs-group-title flex items-center justify-between gap-2">
                           <span>{frameLabel[ft]}图片</span>
                           <Space size={8}>
-                            <Button size="small" type="link" onClick={() => updateCardState(ft, { modalOpen: true })}>
+                            <Button size="small" type="link" onClick={() => { updateCardState(ft, { modalOpen: true }); void onRefreshShotFrameImages?.().then(() => loadCardThumbs(ft)) }}>
                               更多
                             </Button>
                             <Button size="small" type="primary" loading={st.loading} onClick={() => void generateKeyframeCard(ft)}>
@@ -5066,7 +5151,14 @@ function Inspector(props: {
                         </div>
                         <div className="text-xs text-gray-500 min-h-5">{statusText}</div>
                         {st.thumbs.length === 0 ? (
-                          <div className="mt-2 h-24 border border-dashed rounded flex items-center justify-center text-xs text-gray-400">暂无图片</div>
+                          <button
+                            type="button"
+                            className="mt-2 w-full h-20 border border-dashed border-gray-300 rounded flex flex-col items-center justify-center gap-1 text-xs text-gray-400 hover:border-blue-400 hover:text-blue-500 hover:bg-blue-50 transition-colors cursor-pointer"
+                            onClick={() => { updateCardState(ft, { modalOpen: true }); void onRefreshShotFrameImages?.().then(() => loadCardThumbs(ft)) }}
+                          >
+                            <PlusOutlined />
+                            <span>配置参考素材后生成</span>
+                          </button>
                         ) : (
                           <div className="mt-2 flex items-center gap-2 overflow-x-auto whitespace-nowrap pb-1">
                             {st.thumbs.slice(0, 4).map((it) => (
@@ -5075,7 +5167,7 @@ function Inspector(props: {
                           </div>
                         )}
                         <Modal title={`${frameLabel[ft]}图片`} open={st.modalOpen} onCancel={() => updateCardState(ft, { modalOpen: false })} footer={null} width={720}>
-                          {ft === 'first' ? (
+                          {true ? (
                             <div className="mb-3">
                               <div className="text-sm text-gray-600 mb-2">关联角色</div>
                               <div className="flex items-center gap-2 overflow-x-auto pb-1">
@@ -5084,11 +5176,11 @@ function Inspector(props: {
                                   className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-500 shrink-0 hover:border-gray-400 hover:text-gray-700"
                                   disabled={promptAssetsUpdating || linkRoleLoading}
                                   onClick={() => {
-                                    setLinkRoleSelectedIds([])
+                                    setLinkRoleSelectedIds([...linkedCharacterIds])
                                     setLinkRoleOpen(true)
                                     void loadProjectRoleOptions()
                                   }}
-                                  title="添加关联角色"
+                                  title="编辑关联角色"
                                 >
                                   <PlusOutlined />
                                 </button>
@@ -5228,36 +5320,60 @@ function Inspector(props: {
                             </div>
                           ) : null}
 
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                            {st.thumbs.map((it) => {
-                              const inUse = inUseFileId && inUseFileId === it.fileId
-                              return (
-                                <div key={it.linkId} className="border rounded p-2">
-                                  <img src={it.thumbUrl} alt="" className="w-full h-36 object-cover rounded" />
-                                  <div className="mt-2 flex items-center justify-between">
-                                    {inUse ? (
-                                      <Tag color="green">使用中</Tag>
-                                    ) : (
-                                      <Button size="small" loading={st.applyingFileId === it.fileId} onClick={() => void applyCardImage(ft, it.fileId)}>
-                                        使用
-                                      </Button>
-                                    )}
+                          {st.thumbs.length === 0 ? (
+                            <div className="py-12 flex flex-col items-center justify-center text-gray-400 gap-2">
+                              {st.loading || st.taskStatus === 'pending' || st.taskStatus === 'running' ? (
+                                <>
+                                  <div className="text-sm">生成中，请稍候...</div>
+                                  <div className="text-xs">完成后图片会自动出现在这里</div>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="text-sm">暂无图片</div>
+                                  <div className="text-xs">点击右侧「生成」按钮生成图片</div>
+                                </>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                              {st.thumbs.map((it) => {
+                                const inUse = inUseFileId && inUseFileId === it.fileId
+                                return (
+                                  <div key={it.linkId} className="border rounded p-2">
+                                    <img src={it.thumbUrl} alt="" className="w-full h-36 object-cover rounded" />
+                                    <div className="mt-2 flex items-center justify-between">
+                                      {inUse ? (
+                                        <Tag color="green">使用中</Tag>
+                                      ) : (
+                                        <Button size="small" loading={st.applyingFileId === it.fileId} onClick={() => void applyCardImage(ft, it.fileId)}>
+                                          使用
+                                        </Button>
+                                      )}
+                                    </div>
                                   </div>
-                                </div>
-                              )
-                            })}
-                          </div>
+                                )
+                              })}
+                            </div>
+                          )}
 
                           <Modal
-                            title="关联角色"
+                            title="编辑关联角色"
                             open={linkRoleOpen}
                             onCancel={() => setLinkRoleOpen(false)}
-                            footer={null}
                             destroyOnClose
                             width={560}
+                            onOk={() => {
+                              void (async () => {
+                                await onUpdatePromptActors(linkRoleSelectedIds)
+                                setLinkRoleOpen(false)
+                              })()
+                            }}
+                            okText="保存"
+                            cancelText="取消"
+                            confirmLoading={promptAssetsUpdating}
                           >
                             <div className="space-y-2">
-                              <div className="text-xs text-gray-500">来源：当前项目全部角色（选择后立即保存；已关联的角色不可重复选择）</div>
+                              <div className="text-xs text-gray-500">选中 = 关联；取消选中 = 移除关联</div>
                               <Select
                                 mode="multiple"
                                 className="w-full"
@@ -5272,14 +5388,7 @@ function Inspector(props: {
                                   String(option?.searchLabel ?? '').toLowerCase().includes(input.toLowerCase())
                                 }
                                 onChange={(vals: Array<string | number>) => {
-                                  const nextNew = (vals ?? []).map((v) => String(v)).filter(Boolean)
-                                  setLinkRoleSelectedIds(nextNew)
-                                  const merged = Array.from(new Set([...linkedCharacterIds, ...nextNew]))
-                                  void (async () => {
-                                    await onUpdatePromptActors(merged)
-                                    setLinkRoleOpen(false)
-                                    setLinkRoleSelectedIds([])
-                                  })()
+                                  setLinkRoleSelectedIds((vals ?? []).map((v) => String(v)).filter(Boolean))
                                 }}
                               />
                             </div>
@@ -5528,32 +5637,74 @@ function Inspector(props: {
                     {generatedVideos.length === 0 ? (
                       <div className="text-xs text-gray-400">当前分镜暂无已生成视频</div>
                     ) : (
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                        {generatedVideos.map((item, idx) => (
-                          <div key={`${item.linkId}-${item.fileId}`} className="border rounded p-2">
-                            <video
-                              src={item.url}
-                              className="w-full h-20 rounded object-cover bg-black"
-                              preload="metadata"
-                              muted
-                              onClick={() => onSelectPreviewVideo(item.fileId)}
-                              style={{ cursor: 'pointer' }}
-                            />
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <span className="text-xs text-gray-500">视频 {idx + 1}</span>
-                              <Tooltip title="下载视频">
-                                <Button
-                                  size="small"
-                                  icon={<DownloadOutlined />}
-                                  onClick={() => {
-                                    if (!item.url) return
-                                    window.open(item.url, '_blank', 'noopener,noreferrer')
-                                  }}
+                      <div className="flex flex-col gap-2">
+                        {generatedVideos.map((item, idx) => {
+                          const isSelected = (selectedPreviewFileId ?? selectedShot?.generated_video_file_id) === item.fileId
+                          const isAdopted = item.status === 'accepted'
+                          const isRejected = item.status === 'rejected'
+                          const adopting = adoptingVideoTaskId === item.taskId || adoptingVideoTaskId === String(item.linkId)
+                          return (
+                            <div
+                              key={`${item.linkId}-${item.fileId}`}
+                              className="border rounded p-2 cursor-pointer"
+                              style={{ outline: isSelected ? '2px solid #1677ff' : isAdopted ? '2px solid #52c41a' : undefined, opacity: isRejected ? 0.5 : 1 }}
+                              onClick={() => { setSelectedPreviewFileId(item.fileId); onSelectPreviewVideo(item.fileId) }}
+                            >
+                              <div className="relative w-full" style={{ paddingTop: '56.25%' }}>
+                                <video
+                                  src={item.url}
+                                  className="absolute inset-0 w-full h-full rounded object-cover bg-black"
+                                  preload="metadata"
+                                  muted
                                 />
-                              </Tooltip>
+                                <div className="absolute inset-0 rounded" />
+                                {isAdopted && (
+                                  <div className="absolute top-1 right-1 bg-green-500 text-white text-xs px-1 rounded">已采用</div>
+                                )}
+                                {isRejected && (
+                                  <div className="absolute top-1 right-1 bg-gray-400 text-white text-xs px-1 rounded">已废弃</div>
+                                )}
+                              </div>
+                              <div className="mt-2 flex items-center justify-between gap-1">
+                                <span className="text-xs text-gray-500 shrink-0">视频 {idx + 1}</span>
+                                <Space size={2} onClick={(e) => e.stopPropagation()}>
+                                  <Tooltip title="采用此视频">
+                                    <Button
+                                      size="small"
+                                      type={isAdopted ? 'primary' : 'default'}
+                                      loading={adopting}
+                                      disabled={!item.taskId || adopting}
+                                      onClick={() => { void adoptVideo(item.taskId, selectedShot!.id) }}
+                                    >
+                                      采用
+                                    </Button>
+                                  </Tooltip>
+                                  <Tooltip title="废弃此视频">
+                                    <Button
+                                      size="small"
+                                      danger={isRejected}
+                                      loading={adopting}
+                                      disabled={adopting}
+                                      onClick={() => { void rejectVideo(item) }}
+                                    >
+                                      废弃
+                                    </Button>
+                                  </Tooltip>
+                                  <Tooltip title="下载视频">
+                                    <Button
+                                      size="small"
+                                      icon={<DownloadOutlined />}
+                                      onClick={() => {
+                                        if (!item.url) return
+                                        window.open(item.url, '_blank', 'noopener,noreferrer')
+                                      }}
+                                    />
+                                  </Tooltip>
+                                </Space>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -5598,20 +5749,14 @@ function Inspector(props: {
         <Modal
           title={`${frameLabel[keyframePromptPreviewFrameType]}图片生成提示词预览`}
           open={keyframePromptPreviewOpen}
-          onCancel={() => {
-            if (keyframePromptActionLoading) return
-            setKeyframePromptPreviewOpen(false)
-          }}
+          onCancel={() => setKeyframePromptPreviewOpen(false)}
           footer={(
             <div className="flex items-center justify-between">
               <div />
               <Space>
                 <Button
                   loading={keyframePromptActionLoading}
-                  onClick={() => {
-                    if (keyframePromptActionLoading) return
-                    setKeyframePromptPreviewOpen(false)
-                  }}
+                  onClick={() => setKeyframePromptPreviewOpen(false)}
                 >
                   取消
                 </Button>

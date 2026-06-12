@@ -1,123 +1,145 @@
-import React, { useEffect, useState } from 'react'
-import { Card, Layout, Button, message } from 'antd'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import { Card, Button, message, Tag, Empty, Spin, Image } from 'antd'
 import {
-  ScissorOutlined,
-  PlusOutlined,
   ExportOutlined,
-  PlayCircleOutlined,
   ArrowLeftOutlined,
+  VideoCameraOutlined,
+  FileImageOutlined,
 } from '@ant-design/icons'
 import { useParams, Link } from 'react-router-dom'
-import api from '../../../services/aiStudioApi'
-import type { TimelineClip } from '../../../mocks/data'
-
-const { Content } = Layout
+import { StudioFilesService } from '../../../services/generated/services/StudioFilesService'
+import { OpenAPI } from '../../../services/generated/core/OpenAPI'
+import type { FileRead } from '../../../services/generated/models/FileRead'
 
 const VideoEditor: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>()
-  const [clips, setClips] = useState<TimelineClip[]>([])
+  const [files, setFiles] = useState<FileRead[]>([])
   const [loading, setLoading] = useState(true)
 
-  const load = async () => {
-    if (!projectId) return
-    setLoading(true)
-    try {
-      const list = await api.timeline.get(projectId)
-      setClips(Array.isArray(list) ? list : [])
-    } catch {
-      message.error('加载时间线失败')
-    } finally {
-      setLoading(false)
-    }
-  }
+  const backendBase = useMemo(() => (OpenAPI.BASE || '').replace(/\/$/, ''), [])
+  const fileUrl = useCallback((id: string) => `${backendBase}/api/v1/studio/files/${id}/download`, [backendBase])
 
   useEffect(() => {
-    void load()
+    if (!projectId) { setLoading(false); return }
+    setLoading(true)
+    void StudioFilesService.listFilesApiApiV1StudioFilesGet({
+      projectId,
+      order: 'updated_at',
+      isDesc: true,
+      page: 1,
+      pageSize: 100,
+    })
+      .then((res) => setFiles(res.data?.items ?? []))
+      .catch(() => message.error('加载素材失败'))
+      .finally(() => setLoading(false))
   }, [projectId])
 
+  const videos = files.filter(f => f.type === 'video')
+  const images = files.filter(f => f.type === 'image')
+
   return (
-    <div className="space-y-4">
-      <div className="mb-2">
+    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
         <Link
           to={projectId ? `/projects/${projectId}/chapters` : '/projects'}
-          className="text-sm text-gray-600 hover:text-blue-600 flex items-center gap-1"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#595959', fontSize: 13 }}
         >
           <ArrowLeftOutlined /> {projectId ? '返回章节列表' : '项目列表'}
         </Link>
       </div>
+
       <Card
-        title="视频编辑"
+        title="视频编辑器"
         extra={
-          <Button type="primary" icon={<ExportOutlined />}>
-            导出成片
+          <Button icon={<ExportOutlined />} disabled>
+            导出成片（开发中）
           </Button>
         }
       >
-        <div className="flex items-center gap-2 mb-4">
-          <Button icon={<ScissorOutlined />}>剪切</Button>
-          <Button icon={<PlusOutlined />}>添加效果</Button>
-          <Button icon={<PlayCircleOutlined />}>预览</Button>
+        <div style={{
+          background: '#141414',
+          borderRadius: 8,
+          padding: 24,
+          minHeight: 300,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: 16,
+          color: '#595959',
+          fontSize: 14,
+        }}>
+          视频合成编辑器 · 开发中
         </div>
 
-        <Layout className="bg-gray-50 rounded p-4 min-h-[400px]">
-          <div className="mb-4">
-            <div className="text-sm text-gray-500 mb-2">素材库</div>
-            <div className="flex gap-2 flex-wrap">
-              {clips.map((c) => (
-                <div
-                  key={c.id}
-                  className="px-3 py-2 bg-white rounded border border-gray-200 text-sm cursor-pointer hover:border-blue-400"
-                >
-                  {c.label}
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+        ) : (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontWeight: 500, marginBottom: 8, color: '#262626' }}>
+                <Tag color="blue" icon={<VideoCameraOutlined />}>视频素材</Tag>
+                共 {videos.length} 个
+              </div>
+              {videos.length === 0 ? (
+                <Empty description="暂无视频素材" imageStyle={{ height: 40 }} />
+              ) : (
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  {videos.map(f => (
+                    <div key={f.id} style={{
+                      width: 180,
+                      background: '#000',
+                      borderRadius: 6,
+                      overflow: 'hidden',
+                      border: '1px solid #303030',
+                    }}>
+                      <video
+                        src={fileUrl(f.id)}
+                        style={{ width: '100%', height: 100, objectFit: 'cover', display: 'block' }}
+                        controls={false}
+                        preload="metadata"
+                        muted
+                      />
+                      <div style={{ padding: '4px 8px', fontSize: 11, color: '#8c8c8c', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.name}>
+                        {f.name}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-              {clips.length === 0 && !loading && (
-                <span className="text-gray-500">暂无素材，可从文件管理导入</span>
               )}
             </div>
-          </div>
-          <Content>
-            <div className="text-sm text-gray-500 mb-2">时间线（拖拽素材到轨道）</div>
-            <div className="bg-white rounded border border-gray-200 overflow-hidden">
-              <div className="grid grid-cols-[80px_1fr] border-b border-gray-200">
-                <div className="px-2 py-2 bg-gray-50 text-gray-600 text-xs font-medium">轨道</div>
-                <div className="px-2 py-2 bg-gray-50 text-gray-600 text-xs font-medium">内容</div>
+
+            <div>
+              <div style={{ fontWeight: 500, marginBottom: 8, color: '#262626' }}>
+                <Tag color="green" icon={<FileImageOutlined />}>图片素材</Tag>
+                共 {images.length} 个
               </div>
-              <div className="grid grid-cols-[80px_1fr] border-b border-gray-100">
-                <div className="px-2 py-3 bg-gray-50/80 text-gray-500 text-xs">视频轨道</div>
-                <div className="px-2 py-3 min-h-[56px] flex items-center gap-2 flex-wrap">
-                  {clips.filter((c) => c.type === 'video').map((c) => (
-                    <div
-                      key={c.id}
-                      className="px-2 py-1.5 bg-blue-50 border border-blue-200 rounded text-sm cursor-move"
-                    >
-                      {c.label}（{c.start}s–{c.end}s）
+              {images.length === 0 ? (
+                <Empty description="暂无图片素材" imageStyle={{ height: 40 }} />
+              ) : (
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  {images.map(f => (
+                    <div key={f.id} style={{
+                      width: 120,
+                      borderRadius: 6,
+                      overflow: 'hidden',
+                      border: '1px solid #f0f0f0',
+                    }}>
+                      <Image
+                        src={fileUrl(f.id)}
+                        style={{ width: 120, height: 80, objectFit: 'cover', display: 'block' }}
+                        preview={false}
+                        fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+                      />
+                      <div style={{ padding: '4px 6px', fontSize: 11, color: '#8c8c8c', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.name}>
+                        {f.name}
+                      </div>
                     </div>
                   ))}
-                  {clips.filter((c) => c.type === 'video').length === 0 && (
-                    <span className="text-gray-400 text-xs">拖入视频素材</span>
-                  )}
                 </div>
-              </div>
-              <div className="grid grid-cols-[80px_1fr]">
-                <div className="px-2 py-3 bg-gray-50/80 text-gray-500 text-xs">音频轨道</div>
-                <div className="px-2 py-3 min-h-[56px] flex items-center gap-2 flex-wrap">
-                  {clips.filter((c) => c.type === 'audio').map((c) => (
-                    <div
-                      key={c.id}
-                      className="px-2 py-1.5 bg-green-50 border border-green-200 rounded text-sm cursor-move"
-                    >
-                      {c.label}（{c.start}s–{c.end}s）
-                    </div>
-                  ))}
-                  {clips.filter((c) => c.type === 'audio').length === 0 && (
-                    <span className="text-gray-400 text-xs">拖入音频/配乐</span>
-                  )}
-                </div>
-              </div>
+              )}
             </div>
-          </Content>
-        </Layout>
+          </>
+        )}
       </Card>
     </div>
   )

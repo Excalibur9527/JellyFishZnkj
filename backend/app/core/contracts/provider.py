@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
-ProviderKey = Literal["openai", "volcengine"]
+ProviderKey = Literal["openai", "volcengine", "kling", "bailian", "kling_proxy"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,3 +15,4 @@ class ProviderConfig:
     provider: ProviderKey
     api_key: str
     base_url: str | None = None
+    api_secret: str | None = None  # Kling 等需要双密钥的供应商使用

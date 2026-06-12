@@ -30,6 +30,15 @@ class VideoGenerationInput(BaseModel):
     last_frame_base64: Optional[str] = Field(None, description="尾帧图：纯 base64 或 data URL")
     key_frame_base64: Optional[str] = Field(None, description="关键帧图：纯 base64 或 data URL")
 
+    character_references: Optional[list[str]] = Field(
+        None,
+        description="角色人脸参考图列表（纯 base64 或 data URL）；传给 Kling 时作为 type=reference 锁定人脸",
+    )
+    camera_movement: Optional[str] = Field(
+        None,
+        description="运镜方式 code（STATIC/PAN/TILT/DOLLY_IN/DOLLY_OUT/ZOOM_IN/ZOOM_OUT/TRACK/CRANE/HANDHELD/STEADICAM）",
+    )
+
     model: Optional[str] = Field(None, description="视频模型名称（可选，供应商透传）")
     ratio: VideoRatio = Field(..., description="视频宽高比，业务层唯一主参数")
     seconds: Optional[int] = Field(None, description="时长（秒）（可选，供应商透传）")

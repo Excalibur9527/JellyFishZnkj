@@ -35,14 +35,28 @@ export function ScenesTab() {
 
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(12)
+
+  // 按 scene_id 去重：每个场景只展示一张卡，记录该场景的所有 link id（用于批量取消关联）
+  const uniqueLinks = useMemo(() => {
+    const seen = new Map<string, ProjectSceneLinkRead & { allLinkIds: number[] }>()
+    for (const l of links) {
+      if (seen.has(l.scene_id)) {
+        seen.get(l.scene_id)!.allLinkIds.push(l.id)
+      } else {
+        seen.set(l.scene_id, { ...l, allLinkIds: [l.id] })
+      }
+    }
+    return Array.from(seen.values())
+  }, [links])
+
   const pagedLinks = useMemo(() => {
     const start = (page - 1) * pageSize
-    return links.slice(start, start + pageSize)
-  }, [links, page, pageSize])
+    return uniqueLinks.slice(start, start + pageSize)
+  }, [uniqueLinks, page, pageSize])
 
   useEffect(() => {
     setPage(1)
-  }, [links.length])
+  }, [uniqueLinks.length])
 
   const loadLinks = async () => {
     if (!projectId) return
@@ -142,10 +156,15 @@ export function ScenesTab() {
     }
   }
 
-  const handleUnlinkScene = async (link: ProjectSceneLinkRead) => {
+  const handleUnlinkScene = async (link: ProjectSceneLinkRead & { allLinkIds: number[] }) => {
     setUnlinkingId(link.id)
     try {
-      await StudioShotLinksService.deleteProjectSceneLinkApiV1StudioShotLinksSceneLinkIdDelete({ linkId: link.id })
+      // 删除该场景在本项目的所有关联记录（含镜头级关联）
+      await Promise.all(
+        link.allLinkIds.map((id) =>
+          StudioShotLinksService.deleteProjectSceneLinkApiV1StudioShotLinksSceneLinkIdDelete({ linkId: id }),
+        ),
+      )
       message.success('已取消关联')
       await loadLinks()
     } catch {
@@ -182,7 +201,7 @@ export function ScenesTab() {
           </Space>
         }
       >
-        {links.length === 0 && !linksLoading ? (
+        {uniqueLinks.length === 0 && !linksLoading ? (
           <Empty description="暂无项目场景，可从资产库关联场景到本项目" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         ) : (
           <div className="space-y-3">
@@ -191,7 +210,7 @@ export function ScenesTab() {
               const s = scenesById[l.scene_id]
               return (
                 <DisplayImageCard
-                  key={l.id}
+                  key={l.scene_id}
                   title={<div className="truncate">{s?.name ?? l.scene_id}</div>}
                   imageUrl={toThumbUrl(l.thumbnail ?? s?.thumbnail)}
                   imageAlt={s?.name ?? l.scene_id}
@@ -216,6 +235,7 @@ export function ScenesTab() {
                         onClick={() => {
                           Modal.confirm({
                             title: `取消关联「${s?.name ?? l.scene_id}」？`,
+                            content: l.allLinkIds.length > 1 ? `该场景在本项目中有 ${l.allLinkIds.length} 条关联记录（含镜头级关联），将全部删除。` : undefined,
                             okText: '取消关联',
                             cancelText: '取消',
                             okButtonProps: { danger: true },
@@ -241,7 +261,7 @@ export function ScenesTab() {
               <Pagination
                 current={page}
                 pageSize={pageSize}
-                total={links.length}
+                total={uniqueLinks.length}
                 showSizeChanger={false}
                 showTotal={(t) => `共 ${t} 条`}
                 onChange={(p, ps) => {

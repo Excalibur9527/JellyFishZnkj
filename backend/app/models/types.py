@@ -209,3 +209,4 @@ class PromptCategory(str, Enum):
     costume_image_front = "costume_image_front"
     costume_image_other = "costume_image_other"
     combined = "combined"
+    character_sheet = "character_sheet"
