@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
+import { randomUUID } from '../../../utils/uuid'
 import type { TaskPageContext } from './taskUiStore'
 import { useTaskUiStore } from './taskUiStore'
 
@@ -7,7 +8,7 @@ export function useTaskPageContext(
 ) {
   const registerPageContext = useTaskUiStore((state) => state.registerPageContext)
   const unregisterPageContext = useTaskUiStore((state) => state.unregisterPageContext)
-  const scopeIdRef = useRef(`task-page-context-${crypto.randomUUID()}`)
+  const scopeIdRef = useRef(`task-page-context-${randomUUID()}`)
 
   const normalizedContexts = useMemo(
     () =>

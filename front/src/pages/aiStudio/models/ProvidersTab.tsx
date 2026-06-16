@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { randomUUID } from '../../../utils/uuid'
 import {
   Layout,
   Input,
@@ -171,10 +172,7 @@ export default function ProvidersTab() {
         })
         message.success('供应商已更新')
       } else {
-        const id =
-          typeof crypto !== 'undefined' && crypto.randomUUID
-            ? crypto.randomUUID()
-            : `prov_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+        const id = randomUUID()
         await LlmService.createProviderApiV1LlmProvidersPost({
           requestBody: {
             id,

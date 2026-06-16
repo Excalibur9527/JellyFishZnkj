@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
+from app.models.studio_shots import ShotDetail
 from app.services.studio.shot_assets import (
     create_project_asset_link as create_project_asset_link_service,
     delete_project_asset_link as delete_project_asset_link_service,
@@ -511,7 +512,16 @@ async def get_shot_detail(
     shot_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ShotDetailRead]:
-    obj = await get_shot_detail_service(db, shot_id=shot_id)
+    try:
+        obj = await get_shot_detail_service(db, shot_id=shot_id)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            obj = ShotDetail(id=shot_id)
+            db.add(obj)
+            await db.commit()
+            await db.refresh(obj)
+        else:
+            raise
     return success_response(ShotDetailRead.model_validate(obj))
 
 

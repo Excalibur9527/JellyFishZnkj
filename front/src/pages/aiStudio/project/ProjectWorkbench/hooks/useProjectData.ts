@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { randomUUID } from '../../../../../utils/uuid'
 import { projects as mockProjects, chapters as mockChapters, type Project, type Chapter as MockChapter } from '../../../../../mocks/data'
 import { StudioChaptersService, StudioProjectsService } from '../../../../../services/generated'
 import type { ChapterRead, ProjectRead } from '../../../../../services/generated'
@@ -6,11 +7,8 @@ import { StudioEntitiesApi } from '../../../../../services/studioEntities'
 
 const useMock = import.meta.env.VITE_USE_MOCK === 'true'
 
-function newId(prefix: string): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`
+function newId(): string {
+  return randomUUID()
 }
 
 function toUIProject(p: ProjectRead): Project {

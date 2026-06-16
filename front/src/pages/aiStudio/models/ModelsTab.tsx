@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { randomUUID } from '../../../utils/uuid'
 import {
   Alert,
   Layout,
@@ -206,10 +207,7 @@ export default function ModelsTab() {
           message.warning('请先添加供应商后再添加模型')
           return
         }
-        const modelId =
-          typeof crypto !== 'undefined' && crypto.randomUUID
-            ? crypto.randomUUID()
-            : `model_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+        const modelId = randomUUID()
         await LlmService.createModelApiV1LlmModelsPost({
           requestBody: {
             id: modelId,

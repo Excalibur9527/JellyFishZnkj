@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { randomUUID } from '../../../../utils/uuid'
 import { Input, InputNumber, Modal, message } from 'antd'
 import { StudioEntitiesApi } from '../../../../services/studioEntities'
 import { ProjectVisualStyleAndStyleFields } from '../../project/ProjectVisualStyleAndStyleFields'
@@ -77,7 +78,7 @@ export function ActorEntityFormModal({
     try {
       if (!editing) {
         const created = await StudioEntitiesApi.create('actor', {
-          id: crypto?.randomUUID?.() ?? `actor_${Date.now()}`,
+          id: randomUUID(),
           name,
           description: formDesc.trim() || undefined,
           tags: normalizeTags(formTags),
