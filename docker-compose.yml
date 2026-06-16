@@ -21,6 +21,21 @@ services:
       timeout: 3s
       retries: 3
 
+  # ── RustFS（S3 兼容对象存储）──────────────────────────────────
+  rustfs:
+    image: rustfs/rustfs:latest
+    restart: unless-stopped
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: "rustfsadmin"
+      RUSTFS_SECRET_KEY: "rustfsadmin"
+      RUSTFS_CONSOLE_ENABLE: "true"
+    ports:
+      - "9010:9000"
+      - "9011:9001"
+    volumes:
+      - rustfs_data:/data
+
   # ── 后端 API（FastAPI + uvicorn）────────────────────────────────
   backend:
     build:
@@ -38,6 +53,13 @@ services:
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       CORS_ORIGINS: "http://45.120.100.154:8444"
+      # S3 / RustFS
+      S3_ENDPOINT_URL: "http://rustfs:9000"
+      S3_REGION_NAME: "us-east-1"
+      S3_ACCESS_KEY_ID: "rustfsadmin"
+      S3_SECRET_ACCESS_KEY: "rustfsadmin"
+      S3_BUCKET_NAME: "jellyfish-assets"
+      S3_PUBLIC_BASE_URL: "http://45.120.100.154:9010/jellyfish-assets"
       # OPENAI_API_KEY: "sk-xxx"
       # IMAGE_API_PROVIDER: "openai"
       # IMAGE_API_BASE_URL: "https://api.openai.com/v1/images/generations"
@@ -50,6 +72,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      rustfs:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
@@ -70,6 +94,13 @@ services:
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       # OPENAI_API_KEY: "sk-xxx"
+      # S3 / RustFS
+      S3_ENDPOINT_URL: "http://rustfs:9000"
+      S3_REGION_NAME: "us-east-1"
+      S3_ACCESS_KEY_ID: "rustfsadmin"
+      S3_SECRET_ACCESS_KEY: "rustfsadmin"
+      S3_BUCKET_NAME: "jellyfish-assets"
+      S3_PUBLIC_BASE_URL: "http://45.120.100.154:9010/jellyfish-assets"
     volumes:
       - backend_db:/app/data
     depends_on:
@@ -77,6 +108,8 @@ services:
         condition: service_healthy
       backend:
         condition: service_healthy
+      rustfs:
+        condition: service_started
 
   # ── 前端（nginx 静态服务）──────────────────────────────────────
   frontend:
@@ -95,3 +128,4 @@ services:
 volumes:
   redis_data:
   backend_db:
+  rustfs_data:
