@@ -37,6 +37,7 @@ RUN printf 'server {\n\
         try_files $uri $uri/ /index.html;\n\
     }\n\
     location /assets/ {\n\
+        try_files $uri $uri/ /index.html;\n\
         expires 1y;\n\
         add_header Cache-Control "public, immutable";\n\
     }\n\
