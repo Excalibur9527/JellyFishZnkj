@@ -173,6 +173,9 @@ async def build_run_args(
     final_prompt = submission.prompt.strip()
     if not final_prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
+    # 可灵 API 限制 prompt 最多 2500 字符
+    if len(final_prompt) > 2500:
+        final_prompt = final_prompt[:2500]
 
     required_frames = tuple(ShotFrameType(item) for item in REQUIRED_FRAMES_BY_MODE[reference_mode])
     frame_data_urls = [await file_id_to_data_url(db, file_id=file_id) for file_id in submission.images]
