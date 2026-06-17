@@ -85,9 +85,13 @@ _CAMERA_CONTROL_MAP: dict[str, dict[str, Any]] = {
 
 async def _build_body(input_: VideoGenerationInput) -> dict[str, Any]:
     duration = _DURATION_MAP.get(input_.seconds or 5, _DEFAULT_DURATION)
+    prompt = (input_.prompt or "").strip()
+    # 可灵 API 限制 prompt 最多 2500 字符
+    if len(prompt) > 2500:
+        prompt = prompt[:2500]
     body: dict[str, Any] = {
         "model_name": (input_.model or "kling-video-o1").strip(),
-        "prompt": (input_.prompt or "").strip(),
+        "prompt": prompt,
         "duration": duration,
         "mode": "std",
     }
