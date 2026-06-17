@@ -10,14 +10,17 @@ import {
   InputNumber,
   Modal,
   Row,
+  Select,
   Space,
   Spin,
   Tag,
   Typography,
+  Upload,
   message,
 } from 'antd'
-import { ArrowLeftOutlined, CloseCircleOutlined, EditOutlined, ReloadOutlined } from '@ant-design/icons'
-import { FilmService, ScriptProcessingService } from '../../../../services/generated'
+import { ArrowLeftOutlined, CloseCircleOutlined, EditOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
+
+import { FilmService, ScriptProcessingService, StudioFilesService, StudioPromptsService } from '../../../../services/generated'
 import type { TaskStatus } from '../../../../services/generated'
 import { listTaskLinksNormalized } from '../../../../services/filmTaskLinks'
 import { buildFileDownloadUrl } from '../utils'
@@ -60,6 +63,7 @@ export type AssetUpdate = {
   visual_style: '现实' | '动漫'
   style?: string
   visual_fingerprint?: string | null
+  prompt_template_id?: string | null
 }
 
 const DEFAULT_ANGLES: AssetViewAngle[] = ['FRONT', 'LEFT', 'RIGHT', 'BACK']
@@ -83,7 +87,16 @@ export type BaseAsset = {
   visual_style?: '现实' | '动漫'
   style?: string
   visual_fingerprint?: string | null
+  prompt_template_id?: string | null
 }
+
+export type AssetQualityLevel = 'LOW' | 'MEDIUM' | 'HIGH'
+
+const QUALITY_LEVEL_OPTIONS: { value: AssetQualityLevel; label: string }[] = [
+  { value: 'LOW', label: '低' },
+  { value: 'MEDIUM', label: '中' },
+  { value: 'HIGH', label: '高' },
+]
 
 export type BaseAssetImage = {
   id: number
@@ -92,6 +105,7 @@ export type BaseAssetImage = {
   width?: number | null
   height?: number | null
   format?: string | null
+  quality_level?: AssetQualityLevel | null
 }
 
 export type AssetEditPageBaseProps<TAsset extends BaseAsset, TImage extends BaseAssetImage> = {
@@ -104,7 +118,7 @@ export type AssetEditPageBaseProps<TAsset extends BaseAsset, TImage extends Base
   updateAsset: (assetId: string, payload: AssetUpdate) => Promise<TAsset | null>
   listImages: (assetId: string) => Promise<TImage[]>
   createImageSlot: (assetId: string, angle: AssetViewAngle) => Promise<void>
-  updateImage: (assetId: string, imageId: number, payload: { file_id: string; width?: number | null; height?: number | null; format?: string | null }) => Promise<void>
+  updateImage: (assetId: string, imageId: number, payload: { file_id?: string; width?: number | null; height?: number | null; format?: string | null; quality_level?: AssetQualityLevel | null }) => Promise<void>
   renderPrompt: (assetId: string, imageId: number) => Promise<{ prompt: string; images: string[] }>
   createGenerationTask: (assetId: string, imageId: number, payload: { prompt: string; images: string[] }) => Promise<string | null>
   characterSheetActions?: {
@@ -194,6 +208,8 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
   const [savingBase, setSavingBase] = useState(false)
 
   const [formVisualFingerprint, setFormVisualFingerprint] = useState('')
+  const [formPromptTemplateId, setFormPromptTemplateId] = useState<string | null>(null)
+  const [promptTemplateOptions, setPromptTemplateOptions] = useState<{ value: string; label: string }[]>([])
 
   const [smartDetectLoading, setSmartDetectLoading] = useState(false)
   const [smartDetectOpen, setSmartDetectOpen] = useState(false)
@@ -373,6 +389,7 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
       setFormDesc(nextAsset.description ?? '')
       setFormTags((nextAsset.tags ?? []).join(', '))
       setFormVisualFingerprint(nextAsset.visual_fingerprint ?? '')
+      setFormPromptTemplateId(nextAsset.prompt_template_id ?? null)
       {
         const nextVisual = (nextAsset.visual_style ?? defaultVisualStyle) as '现实' | '动漫'
         setFormVisualStyle(nextVisual)
@@ -405,6 +422,15 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
   useEffect(() => {
     void loadData()
   }, [loadData])
+
+  useEffect(() => {
+    StudioPromptsService.listPromptTemplatesApiV1StudioPromptsGet({ pageSize: 100 })
+      .then((res) => {
+        const opts = (res.data?.items ?? []).map((t) => ({ value: t.id, label: t.name }))
+        setPromptTemplateOptions(opts)
+      })
+      .catch(() => {/* 静默失败，不影响主流程 */})
+  }, [])
 
   const slotItems = useMemo(() => {
     const count = clampViewCount(formViewCount)
@@ -445,6 +471,7 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
         ...(relationType === 'character_image' || relationType === 'actor_image'
           ? { visual_fingerprint: formVisualFingerprint.trim() || null }
           : {}),
+        prompt_template_id: formPromptTemplateId || null,
       }
       const nextAsset = await updateAsset(assetId, payload)
       if (nextAsset) setAsset(nextAsset)
@@ -823,6 +850,18 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
               </div>
             ) : (
               <div className="space-y-3">
+                {asset && 'thumbnail' in asset && (asset as { thumbnail?: string }).thumbnail && (
+                  <div>
+                    <div className="text-gray-600 text-sm mb-1">缩略图</div>
+                    <Image
+                      src={(asset as { thumbnail?: string }).thumbnail}
+                      width={120}
+                      height={120}
+                      style={{ objectFit: 'cover', borderRadius: 6 }}
+                      fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                    />
+                  </div>
+                )}
                 <div>
                   <div className="text-gray-600 text-sm mb-1">名称</div>
                   <Input value={formName} onChange={(e) => setFormName(e.target.value)} disabled={smartDetectBusy || savingBase} />
@@ -909,6 +948,18 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
                     }}
                   />
                 </div>
+                <div>
+                  <div className="text-gray-600 text-sm mb-1">提示词模板（可选）</div>
+                  <Select
+                    allowClear
+                    placeholder="选择关联的提示词模板"
+                    className="w-full"
+                    value={formPromptTemplateId ?? undefined}
+                    onChange={(v) => setFormPromptTemplateId(v ?? null)}
+                    options={promptTemplateOptions}
+                    disabled={smartDetectBusy || savingBase}
+                  />
+                </div>
                 <Button type="primary" onClick={() => void handleSaveBaseInfo()} loading={savingBase || smartDetectLoading}>
                   保存基础信息
                 </Button>
@@ -963,7 +1014,28 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
                       imageHeightClassName="h-44"
                       extra={slot.image ? <Tag color="blue">ID {slot.image.id}</Tag> : null}
                       footer={
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col gap-2">
+                          {slot.image && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500 shrink-0">精度</span>
+                              <Select
+                                size="small"
+                                className="flex-1"
+                                value={slot.image.quality_level ?? 'LOW'}
+                                options={QUALITY_LEVEL_OPTIONS}
+                                onChange={async (v) => {
+                                  if (!slot.image || !assetId) return
+                                  try {
+                                    await updateImage(assetId, slot.image.id, { quality_level: v })
+                                    await refreshImages()
+                                  } catch {
+                                    message.error('更新精度失败')
+                                  }
+                                }}
+                              />
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2 flex-wrap">
                           <Button
                             type="primary"
                             size="small"
@@ -981,6 +1053,32 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
                           >
                             编辑
                           </Button>
+                          <Upload
+                            accept="image/*"
+                            showUploadList={false}
+                            customRequest={async ({ file, onSuccess, onError }) => {
+                              if (!slot.image || !assetId) return
+                              try {
+                                const res = await StudioFilesService.uploadFileApiApiV1StudioFilesUploadPost({
+                                  formData: { file: file as unknown as string },
+                                })
+                                const fileId = res.data?.id
+                                if (!fileId) throw new Error('上传未返回文件 ID')
+                                await updateImage(assetId, slot.image.id, { file_id: fileId })
+                                await refreshImages()
+                                message.success('图片上传成功')
+                                onSuccess?.({})
+                              } catch {
+                                message.error('图片上传失败')
+                                onError?.(new Error('上传失败'))
+                              }
+                            }}
+                          >
+                            <Button size="small" icon={<UploadOutlined />} disabled={!slot.image}>
+                              上传
+                            </Button>
+                          </Upload>
+                          </div>
                         </div>
                       }
                     />

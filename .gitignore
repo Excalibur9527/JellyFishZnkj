@@ -2,6 +2,8 @@ node_modules/
 dist/
 .env
 .env.local
+front/public/env.js
+front/src/services/openapi.ts
 .DS_Store
 *.log
 .pnpm-store/

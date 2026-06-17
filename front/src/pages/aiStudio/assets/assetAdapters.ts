@@ -9,16 +9,17 @@ type AdapterConfig<TAsset extends BaseAsset, TImage extends BaseAssetImage> = Om
 >
 
 type UpdateImagePayload = {
-  file_id: string
+  file_id?: string
   width?: number | null
   height?: number | null
   format?: string | null
+  quality_level?: string | null
 }
 
 function normalizeUpdateImagePayload(payload: UpdateImagePayload): UpdateImagePayload {
   return {
     ...payload,
-    format: payload.format ?? 'png',
+    ...(payload.file_id !== undefined ? { format: payload.format ?? 'png' } : {}),
   }
 }
 
