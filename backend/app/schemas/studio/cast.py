@@ -51,12 +51,14 @@ class ActorUpdate(BaseModel):
     view_count: int | None = Field(None, ge=1)
     style: ProjectStyle | None = None
     visual_style: ProjectVisualStyle | None = None
+    visual_fingerprint: str | None = None
 
 
 class ActorRead(ActorBase):
     model_config = ConfigDict(from_attributes=True)
 
     thumbnail: str = Field("", description="缩略图下载地址")
+    visual_fingerprint: str | None = Field(None, description="视觉指纹")
 
 
 class CharacterBase(BaseModel):

@@ -180,6 +180,12 @@ class Actor(Base, TimestampMixin):
         default=ProjectVisualStyle.live_action,
         comment="画面表现形式（现实/动漫等）",
     )
+    visual_fingerprint: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        default=None,
+        comment="视觉指纹：AI 优化后的外貌描述",
+    )
 
     prompt_template: Mapped["PromptTemplate | None"] = relationship()
     images: Mapped[list["ActorImage"]] = relationship(
