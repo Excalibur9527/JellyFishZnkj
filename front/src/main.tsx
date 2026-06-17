@@ -66,20 +66,27 @@ function renderApp() {
   )
 }
 
-// 先立即渲染，避免 MSW 启动阻塞导致白屏
-renderApp()
-
-async function enableMocking() {
+async function startApp() {
   if (import.meta.env.VITE_USE_MOCK !== 'true') {
-    return
+    // Mock 关闭时，注销所有 Service Worker 并 reload，确保不再拦截请求
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations()
+      if (regs.length > 0) {
+        await Promise.all(regs.map((r) => r.unregister()))
+        window.location.reload()
+        return
+      }
+    }
+  } else {
+    try {
+      const { worker } = await import('./mocks/browser')
+      await worker.start({ onUnhandledRequest: 'bypass' })
+    } catch (error) {
+      console.error('MSW start failed:', error)
+    }
   }
-  try {
-    const { worker } = await import('./mocks/browser')
-    await worker.start({ onUnhandledRequest: 'bypass' })
-  } catch (error) {
-    console.error('MSW start failed:', error)
-  }
+  renderApp()
 }
 
-void enableMocking()
+void startApp()
 

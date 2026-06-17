@@ -4277,6 +4277,7 @@ function Inspector(props: {
     if (kinds.has('last')) opts.push({ value: 'last', label: '尾帧' })
     if (kinds.has('first') && kinds.has('last')) opts.push({ value: 'first_last', label: '首尾帧' })
     if (kinds.has('key')) opts.push({ value: 'key', label: '关键帧' })
+    if (kinds.has('first') && kinds.has('last') && kinds.has('key')) opts.push({ value: 'first_last_key', label: '首尾帧+关键帧' })
     return opts
   }, [frameImages])
 
@@ -4291,6 +4292,12 @@ function Inspector(props: {
     const key = frameImages.find((x) => x.frame_type === 'key')?.file_id ?? null
 
     const s = refImageType
+    if (s === 'first_last_key') {
+      return {
+        referenceMode: 'first_last_key' as const,
+        images: [first, last, key].filter((x): x is string => Boolean(x)),
+      }
+    }
     if (s === 'first_last') {
       return {
         referenceMode: 'first_last' as const,
