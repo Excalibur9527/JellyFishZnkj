@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CharacterEmotion } from './CharacterEmotion';
 /**
  * 剧本分镜中的单镜信息：行号 + 预览文本（可选弱语义）。
  */
@@ -30,5 +31,9 @@ export type ShotDivision = {
      * 时间（日/夜/未知等，可选）
      */
     time_of_day?: ('DAY' | 'NIGHT' | 'DAWN' | 'DUSK' | 'UNKNOWN' | '日' | '夜' | '黎明' | '黄昏' | '不明' | '未知' | null);
+    /**
+     * 本镜各出场角色的情绪与微表情推断，若无出场角色则传空列表 []
+     */
+    character_emotions: Array<CharacterEmotion>;
 };
 

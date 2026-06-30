@@ -45,13 +45,14 @@ def test_list_prompt_categories_returns_value_label_description(client: TestClie
         "costume_image_front",
         "costume_image_other",
         "combined",
+        "character_sheet",
     }
     assert "首帧图片" in labels
     assert "关键帧图片" in labels
+    assert "角色设定图提示词" in labels
     assert "用于生成首帧图片的提示词" in descriptions
 
 
 def test_prompt_category_mapping_is_complete() -> None:
     assert set(_PROMPT_CATEGORY_ZH.keys()) == set(PromptCategory)
-
 

@@ -10,7 +10,9 @@ from fastapi.responses import JSONResponse
 from app.api.v1 import router as api_v1_router
 from app.bootstrap import bootstrap_all_registries
 from app.config import settings
+from app.core.db import async_session_maker, init_db
 from app.schemas.common import ApiResponse
+from app.services.studio.prompt_template_bootstrap import ensure_builtin_prompt_templates
 
 
 def _error_message(detail: object) -> str:
@@ -57,6 +59,9 @@ async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化，关闭时清理。"""
     # 启动时：供应商注册 + 任务执行器注册（幂等）
     bootstrap_all_registries()
+    await init_db()
+    async with async_session_maker() as db:
+        await ensure_builtin_prompt_templates(db)
     yield
     # 关闭时：清理资源
     pass

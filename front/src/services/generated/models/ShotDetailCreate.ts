@@ -14,15 +14,15 @@ export type ShotDetailCreate = {
     /**
      * 景别
      */
-    camera_shot: CameraShotType;
+    camera_shot?: (CameraShotType | null);
     /**
      * 机位角度
      */
-    angle: CameraAngle;
+    angle?: (CameraAngle | null);
     /**
      * 运镜方式
      */
-    movement: CameraMovement;
+    movement?: (CameraMovement | null);
     /**
      * 关联场景 ID（可空）
      */

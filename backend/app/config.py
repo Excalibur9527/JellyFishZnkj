@@ -37,7 +37,14 @@ class Settings(BaseSettings):
 
     # CORS：环境变量中建议使用逗号分隔（更贴近 docker-compose 用法）
     # 也兼容 JSON 数组：'["http://a","http://b"]'
-    cors_origins: str = "http://localhost:7788,http://127.0.0.1:7788"
+    cors_origins: str = ",".join(
+        [
+            "http://localhost:7788",
+            "http://127.0.0.1:7788",
+            "http://localhost:7789",
+            "http://127.0.0.1:7789",
+        ]
+    )
 
     @property
     def cors_origins_list(self) -> list[str]:

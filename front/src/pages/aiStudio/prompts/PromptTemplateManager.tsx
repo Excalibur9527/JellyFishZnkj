@@ -27,6 +27,7 @@ const fallbackCategoryLabels: Record<string, string> = {
   costume_image_front: '服装正面',
   costume_image_other: '服装其他',
   combined: '综合提示词',
+  character_sheet: '角色设定图',
 }
 
 const PAGE_SIZE = 10
@@ -53,6 +54,7 @@ const defaultPromptCategories: PromptCategory[] = [
   'costume_image_front',
   'costume_image_other',
   'combined',
+  'character_sheet',
 ]
 
 type CreatePromptForm = {
@@ -97,6 +99,7 @@ function getGroupKey(category: string): (typeof groupOrder)[number] {
   if (category === 'video_prompt' || category === 'storyboard_prompt') return 'video'
   if (['bgm', 'sfx'].includes(category)) return 'audio'
   if (category.startsWith('character_image_')) return 'chapter'
+  if (category === 'character_sheet') return 'chapter'
   if (category.startsWith('actor_image')) return 'actor'
   if (category.startsWith('scene_image_')) return 'scene'
   if (category.startsWith('prop_image_')) return 'prop'
