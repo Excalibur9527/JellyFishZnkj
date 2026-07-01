@@ -43,7 +43,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "8443:8000"
+      - "8443:8765"
     environment:
       APP_NAME: "Jellyfish API"
       DEBUG: "false"
@@ -75,7 +75,7 @@ services:
       rustfs:
         condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/health')"]
       interval: 15s
       timeout: 5s
       retries: 3

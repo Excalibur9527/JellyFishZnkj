@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [react()],
   appType: 'spa',
   server: {
-    port: 7788,
+    port: 5678,
     open: true,
   },
   build: {
@@ -14,4 +14,3 @@ export default defineConfig({
     sourcemap: false,
   },
 })
-

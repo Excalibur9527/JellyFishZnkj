@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.db import Base
-from app.models.studio import Chapter, Character, Project, ProjectStyle, ProjectVisualStyle, Shot, ShotCharacterLink
+from app.models.studio import Actor, Chapter, Character, Project, ProjectStyle, ProjectVisualStyle, Shot, ShotCharacterLink
 from app.services.studio.entity_crud import create_entity
 
 
@@ -65,6 +65,37 @@ async def test_create_character_with_shot_id_auto_links_shot() -> None:
         assert len(rows) == 1
         assert rows[0].character_id == "char1"
         assert rows[0].index == 0
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_create_actor_defaults_visual_fingerprint_to_empty_string() -> None:
+    db, engine = await _build_session()
+    async with db:
+        await _seed_graph(db)
+
+        payload = await create_entity(
+            db,
+            entity_type="actor",
+            body={
+                "id": "actor1",
+                "name": "演员一",
+                "description": "演员描述",
+                "tags": ["联调"],
+                "view_count": 1,
+                "style": ProjectStyle.real_people_city,
+                "visual_style": ProjectVisualStyle.live_action,
+                "prompt_template_id": None,
+                "project_id": "p1",
+            },
+        )
+        await db.commit()
+
+        actor = await db.get(Actor, "actor1")
+
+        assert payload["id"] == "actor1"
+        assert actor is not None
+        assert actor.visual_fingerprint == ""
     await engine.dispose()
 
 

@@ -41,6 +41,6 @@ COPY init_db.py init_storage.py ./
 
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8000
+EXPOSE 8765
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765", "--workers", "2"]

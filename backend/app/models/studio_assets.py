@@ -180,10 +180,10 @@ class Actor(Base, TimestampMixin):
         default=ProjectVisualStyle.live_action,
         comment="画面表现形式（现实/动漫等）",
     )
-    visual_fingerprint: Mapped[str | None] = mapped_column(
+    visual_fingerprint: Mapped[str] = mapped_column(
         Text,
-        nullable=True,
-        default=None,
+        nullable=False,
+        default="",
         comment="视觉指纹：AI 优化后的外貌描述",
     )
 
@@ -324,4 +324,3 @@ __all__ = [
     "Character",
     "CharacterPropLink",
 ]
-

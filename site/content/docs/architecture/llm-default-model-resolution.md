@@ -20,6 +20,15 @@ description: "当前生效的 LLM 默认模型来源与解析顺序。"
 - 若对应默认模型 ID 未配置，服务返回 `503`（`No default model configured for category=...`）。
 - 若配置了模型 ID 但模型不存在，服务返回 `503`（`Configured default model not found: ...`）。
 
+## 本地开发自修复
+
+- SQLite 本地开发环境启动时，会检查默认文本模型是否真正可用。
+- 若当前默认文本模型对应供应商缺少 `api_key`，且环境中存在 `DEEPSEEK_API_KEY`：
+  - 系统会自动补齐一条本地 `DeepSeek` 文本供应商
+  - 自动补齐一条本地 `deepseek-chat` 文本模型
+  - 将 `model_settings.default_text_model_id` 切到这条本地模型
+- 若当前默认文本模型已经可用，则不会覆盖用户现有配置。
+
 ## 管理入口
 
 - 默认模型仅通过 `LLM Model Settings` 接口维护（`/api/v1/llm/model-settings`）。

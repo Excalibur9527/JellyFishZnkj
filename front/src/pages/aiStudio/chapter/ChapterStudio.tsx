@@ -102,7 +102,7 @@ import type {
 import { listTaskLinksNormalized } from '../../../services/filmTaskLinks'
 import { buildFileDownloadUrl, resolveAssetUrl } from '../assets/utils'
 import type { Chapter } from '../../../mocks/data'
-import { executeTaskCancel } from '../components/taskActionHelpers'
+import { defaultTaskActionErrorMessage, executeTaskCancel } from '../components/taskActionHelpers'
 import { useRelationTaskNotification } from '../components/taskNotificationHelpers'
 import { TASK_COPY } from '../components/taskCopy'
 import { ChapterStudioBatchToolbar } from './components/ChapterStudioBatchToolbar'
@@ -4339,8 +4339,8 @@ function Inspector(props: {
           derived,
         })
       }
-    } catch {
-      message.error('获取视频提示词预览失败')
+    } catch (error) {
+      message.error(defaultTaskActionErrorMessage(error, '获取视频提示词预览失败'))
     } finally {
       setVideoPromptPreviewLoading(false)
     }
@@ -4379,8 +4379,8 @@ function Inspector(props: {
       })
       setVideoSettledTask(null)
       setVideoPromptPreviewOpen(false)
-    } catch {
-      message.error('发起视频生成失败')
+    } catch (error) {
+      message.error(defaultTaskActionErrorMessage(error, '发起视频生成失败'))
     } finally {
       setVideoPromptPreviewSubmitting(false)
     }
@@ -5630,11 +5630,22 @@ function Inspector(props: {
                       <ThunderboltOutlined /> 生成
                     </div>
                     <Space wrap>
-                      <Button type="primary" icon={<VideoCameraOutlined />} loading={videoPromptPreviewSubmitting || videoTaskPolling} onClick={() => void openVideoPromptPreview()}>
-                        生成视频
+                      <Button icon={<FileTextOutlined />} onClick={() => void openVideoPromptPreview()}>
+                        预览提示词
+                      </Button>
+                      <Button
+                        type="primary"
+                        icon={<VideoCameraOutlined />}
+                        loading={videoPromptPreviewSubmitting || videoTaskPolling}
+                        onClick={() => void openVideoPromptPreview()}
+                      >
+                        预览并生成视频
                       </Button>
                       {videoTaskStatus ? <span className="text-xs text-gray-500">任务状态：{videoTaskStatus}</span> : null}
                     </Space>
+                    <div className="mt-2 text-xs text-slate-500">
+                      先看“视频生成提示词预览”，再确认提交。若当前模型不支持你选的参考模式，预览阶段会直接提示，不再静默忽略关键帧或多图参考。
+                    </div>
                   </div>
 
                   <div className="cs-group">

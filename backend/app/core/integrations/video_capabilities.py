@@ -17,6 +17,17 @@ DEFAULT_RATIO_TO_SIZE_MAPPING: dict[str, str] = {
     "21:9": "1680x720",
 }
 
+SUPPORTED_REFERENCE_MODES_BY_PROVIDER: dict[ProviderKey, set[str]] = {
+    "volcengine": {"first", "last", "key", "first_last", "first_last_key", "text_only"},
+    # OpenAI / Bailian 当前只会真正消费单张主参考图，不允许多图模式静默降级。
+    "openai": {"first", "last", "key", "text_only"},
+    "bailian": {"first", "last", "key", "text_only"},
+    # 可灵当前实现仅真实支持首帧 / 尾帧 / 首尾帧；关键帧不会被传给供应商。
+    "kling": {"first", "last", "first_last", "text_only"},
+    "kling_proxy": {"first", "last", "first_last", "text_only"},
+    "local_placeholder": {"text_only"},
+}
+
 
 @dataclass(frozen=True, slots=True)
 class VideoModelCapability:
@@ -150,3 +161,19 @@ def validate_video_options(
         raise ValueError(f"seed is not supported by provider={provider} model={model or '<default>'}")
     if input_.watermark is not None and not cap.supports_watermark:
         raise ValueError(f"watermark is not supported by provider={provider} model={model or '<default>'}")
+
+
+def validate_video_reference_mode_support(
+    *,
+    provider: ProviderKey,
+    reference_mode: str,
+) -> None:
+    """校验当前供应商是否真实支持所选参考模式。"""
+
+    supported = SUPPORTED_REFERENCE_MODES_BY_PROVIDER.get(provider)
+    if supported is None or reference_mode in supported:
+        return
+    raise ValueError(
+        f"reference_mode={reference_mode} is not supported by provider={provider}. "
+        f"Supported modes: {sorted(supported)}"
+    )

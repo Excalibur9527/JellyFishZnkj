@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.chains.agents import ElementExtractorAgent, ScriptDividerAgent
 from app.chains.agents import (
     CharacterPortraitAnalysisAgent,
@@ -26,6 +27,7 @@ from app.chains.agents.script_processing_agents import (
     ScriptSimplificationResult,
 )
 from app.core.db_sync import sync_session_maker
+from app.services.script_division_fallback import divide_script_locally
 from app.services.script_extraction_cache import (
     build_script_extract_cache_key,
     get_cached_script_extract,
@@ -50,8 +52,26 @@ from app.services.worker.task_executor import (
 logger = logging.getLogger(__name__)
 
 
+def _allow_local_divide_fallback() -> bool:
+    """仅在本地 SQLite 环境允许规则法分镜兜底。"""
+
+    database_url = (settings.database_url or "").strip().lower()
+    return database_url.startswith("sqlite")
+
+
 class DivideResultGenerator(AbstractLLMResultGenerator):
     thinking = False
+
+    def generate(self, db: Session, run_args: dict[str, Any]) -> ScriptDivisionResult:
+        """优先走在线文本模型，失败时在本地开发环境降级为规则分镜。"""
+
+        try:
+            return super().generate(db, run_args)
+        except Exception:
+            if not _allow_local_divide_fallback():
+                raise
+            logger.exception("script divide llm unavailable, falling back to local rule-based divider")
+            return divide_script_locally(str(run_args.get("script_text") or ""))
 
     def generate_with_llm(self, llm, run_args: dict[str, Any]) -> ScriptDivisionResult:
         agent = ScriptDividerAgent(llm)

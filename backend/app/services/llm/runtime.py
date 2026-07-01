@@ -9,7 +9,16 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from sqlalchemy.orm import Session
 
 from app.models.llm import Model, ModelCategoryKey, ModelSettings, Provider
-from app.services.llm.provider_resolver import resolve_effective_base_url
+from app.services.llm.provider_resolver import resolve_effective_base_url, resolve_provider_key_from_name
+
+
+def _supports_enable_thinking_toggle(provider: Provider) -> bool:
+    """仅为明确支持该扩展字段的 provider 注入 thinking 开关。"""
+
+    try:
+        return resolve_provider_key_from_name(provider.name) == "openai"
+    except Exception:  # noqa: BLE001 - provider 名称异常时保守降级，不附带额外字段
+        return False
 
 
 def _default_model_id(settings_row: ModelSettings | None, category: ModelCategoryKey) -> str | None:
@@ -68,7 +77,7 @@ def build_default_text_llm_sync(
     if base_url:
         kwargs.setdefault("base_url", base_url)
 
-    if not thinking:
+    if not thinking and _supports_enable_thinking_toggle(provider):
         extra_body = dict(kwargs.get("extra_body") or {})
         extra_body["enable_thinking"] = False
         kwargs["extra_body"] = extra_body

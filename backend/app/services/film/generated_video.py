@@ -14,6 +14,7 @@ from app.core.task_manager.types import TaskStatus
 from app.core.contracts.provider import ProviderConfig
 from app.core.contracts.video_generation import VideoGenerationInput, VideoGenerationResult
 from app.core.tasks import VideoGenerationTask
+from app.core.integrations.video_capabilities import validate_video_reference_mode_support
 from app.models.llm import Model, ModelCategoryKey, ModelSettings
 from app.models.task_links import GenerationTaskLink
 from app.models.studio import FileItem, Shot, ShotDetail, ShotFrameType
@@ -84,6 +85,16 @@ async def preview_prompt_and_images(
     prompt: str | None,
     images: list[str] | None = None,
 ) -> tuple[str, list[str], dict | None]:
+    model = await resolve_default_video_model(db)
+    provider_cfg = await load_provider_config_by_model(db, model)
+    try:
+        validate_video_reference_mode_support(
+            provider=provider_cfg.provider,
+            reference_mode=reference_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     shot_detail = await validate_shot_and_duration(db, shot_id)
     base = build_video_base_draft(shot_id=shot_id, prompt=prompt)
     context = await build_video_context(
@@ -158,6 +169,13 @@ async def build_run_args(
 ) -> dict:
     model = await resolve_default_video_model(db)
     provider_cfg = await load_provider_config_by_model(db, model)
+    try:
+        validate_video_reference_mode_support(
+            provider=provider_cfg.provider,
+            reference_mode=reference_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     shot_detail = await validate_shot_and_duration(db, shot_id)
     resolved_ratio = await resolve_effective_video_options(requested_ratio=ratio)
     base = build_video_base_draft(shot_id=shot_id, prompt=prompt)

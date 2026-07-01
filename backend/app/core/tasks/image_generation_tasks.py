@@ -51,6 +51,7 @@ class AbstractImageGenerationTask(BaseTask, ABC):
         self._provider_task_id: str | None = None
         self._result: ImageGenerationResult | None = None
         self._error: str = ""
+        self._exception: Exception | None = None
 
     @abstractmethod
     async def _create_task(self) -> None:
@@ -72,6 +73,7 @@ class AbstractImageGenerationTask(BaseTask, ABC):
                 "image_generation_task_exception: %s\n%s", exc, traceback.format_exc()
             )
             self._error = str(exc)
+            self._exception = exc
             self._result = None
         return None
 
@@ -90,6 +92,13 @@ class AbstractImageGenerationTask(BaseTask, ABC):
         return self._result is not None or bool(self._error)
 
     async def get_result(self) -> ImageGenerationResult | None:  # type: ignore[override]
+        """返回图片结果，并保留供应商调用阶段的原始异常。
+
+        图片任务的执行器会据此记录真实失败原因，避免把网络断连、鉴权失败等
+        统一覆盖成没有诊断价值的“未返回结果”。
+        """
+        if self._exception is not None:
+            raise self._exception
         return self._result
 
 

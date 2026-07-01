@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import os
 import uuid
 from pathlib import Path
@@ -57,6 +58,26 @@ def _resolve_download_media_type(filename: str) -> str:
     if ext in {".mkv", ".avi", ".webm"}:
         return f"video/{ext.lstrip('.')}"
     return "application/octet-stream"
+
+
+def _resolve_download_filename(
+    *,
+    file_item: FileItem,
+    storage_filename: str,
+    content_type: str | None,
+) -> str:
+    """生成下载文件名，优先补齐可展示文件的扩展名。"""
+    candidate = (file_item.name or "").strip() or storage_filename or "download"
+    if Path(candidate).suffix:
+        return candidate
+    guessed_ext = mimetypes.guess_extension((content_type or "").split(";", 1)[0].strip().lower()) if content_type else None
+    if guessed_ext:
+        return f"{candidate}{guessed_ext}"
+    if file_item.type == FileType.image:
+        return f"{candidate}.png"
+    if file_item.type == FileType.video:
+        return f"{candidate}.mp4"
+    return candidate
 
 
 async def list_files_paginated(
@@ -147,8 +168,10 @@ async def upload_file(
     file_type = _detect_file_type(file.filename)
     display_name = _build_display_name(file.filename, name)
     content = await file.read()
+    file_id = str(uuid.uuid4())
+    safe_filename = Path(file.filename).name or "upload"
 
-    key = f"files/{file.filename}"
+    key = f"files/{file_id}-{safe_filename}"
     info = await storage.upload_file(
         key=key,
         data=content,
@@ -156,15 +179,19 @@ async def upload_file(
         extra_args={"ACL": "public-read"},
     )
 
+    thumbnail = info.url
+    if not thumbnail and file_type == FileType.image:
+        thumbnail = f"/api/v1/studio/files/{file_id}/download"
+
     file_item = await create_and_refresh(
         db,
         FileItem(
-            id=str(uuid.uuid4()),
+            id=file_id,
             type=file_type,
             name=display_name,
-            thumbnail=info.url,
+            thumbnail=thumbnail,
             tags=[],
-            storage_key=key,
+            storage_key=info.key,
         ),
     )
 
@@ -190,10 +217,17 @@ async def build_download_response(
     """根据 file_id 构建下载响应。"""
     file_item = await get_or_404(db, FileItem, file_id, detail=entity_not_found("File"))
     content = await storage.download_file(key=file_item.storage_key)
+    storage_info = await storage.get_file_info(key=file_item.storage_key)
 
-    filename = Path(file_item.storage_key).name or "download"
-    media_type = _resolve_download_media_type(filename)
-    content_disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
+    storage_filename = Path(file_item.storage_key).name or "download"
+    media_type = (storage_info.content_type or "").strip() or _resolve_download_media_type(storage_filename)
+    filename = _resolve_download_filename(
+        file_item=file_item,
+        storage_filename=storage_filename,
+        content_type=media_type,
+    )
+    disposition_kind = "inline" if media_type.startswith("image/") or media_type.startswith("video/") else "attachment"
+    content_disposition = f"{disposition_kind}; filename*=UTF-8''{quote(filename)}"
     return StreamingResponse(
         iter([content]),
         media_type=media_type,

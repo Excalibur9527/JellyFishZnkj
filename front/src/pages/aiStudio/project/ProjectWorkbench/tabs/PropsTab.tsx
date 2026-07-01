@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Empty, Input, Modal, Space, message, Pagination } from 'antd'
-import { EditOutlined, LinkOutlined, PlusOutlined } from '@ant-design/icons'
+import { Button, Card, Empty, Input, Modal, Space, Tag, message, Pagination } from 'antd'
+import { DeleteOutlined, EditOutlined, LinkOutlined, PlusOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import { StudioShotLinksService } from '../../../../../services/generated'
 import type { ProjectCostumeLinkRead, ProjectPropLinkRead } from '../../../../../services/generated'
@@ -19,6 +19,16 @@ type AssetItemLike = {
   thumbnail?: string
 }
 
+function getApiErrorDetail(error: unknown, fallback: string): string {
+  if (error && typeof error === 'object' && 'body' in error) {
+    const body = (error as { body?: { detail?: string; message?: string } }).body
+    if (typeof body?.detail === 'string' && body.detail.trim()) return body.detail
+    if (typeof body?.message === 'string' && body.message.trim()) return body.message
+  }
+  if (error instanceof Error && error.message.trim()) return error.message
+  return fallback
+}
+
 function LinkedAssetTab({
   kind,
   projectId,
@@ -35,6 +45,7 @@ function LinkedAssetTab({
   const [listLoading, setListLoading] = useState(false)
   const [linkingId, setLinkingId] = useState<string | null>(null)
   const [unlinkingId, setUnlinkingId] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const [links, setLinks] = useState<(ProjectPropLinkRead | ProjectCostumeLinkRead)[]>([])
   const [assets, setAssets] = useState<AssetItemLike[]>([])
@@ -56,14 +67,39 @@ function LinkedAssetTab({
     return Array.from(seen.values())
   }, [links])
 
-  const pagedLinks = useMemo(() => {
+  const linkedIdSet = useMemo(
+    () => new Set(links.map((l) => ('prop_id' in l ? l.prop_id : l.costume_id))),
+    [links],
+  )
+
+  const linkByAssetId = useMemo(() => {
+    const map = new Map<string, (ProjectPropLinkRead | ProjectCostumeLinkRead) & { allLinkIds: number[] }>()
+    uniqueLinks.forEach((link) => {
+      const assetId = 'prop_id' in link ? link.prop_id : link.costume_id
+      map.set(assetId, link)
+    })
+    return map
+  }, [uniqueLinks])
+
+  const visibleAssets = useMemo(() => {
+    const linkedAssets = uniqueLinks
+      .map((link) => {
+        const assetId = 'prop_id' in link ? link.prop_id : link.costume_id
+        return assets.find((asset) => asset.id === assetId) ?? assetsById[assetId]
+      })
+      .filter(Boolean) as AssetItemLike[]
+    const unlinkedAssets = assets.filter((asset) => !linkedIdSet.has(asset.id))
+    return [...linkedAssets, ...unlinkedAssets]
+  }, [assets, assetsById, linkedIdSet, uniqueLinks])
+
+  const pagedAssets = useMemo(() => {
     const start = (page - 1) * pageSize
-    return uniqueLinks.slice(start, start + pageSize)
-  }, [uniqueLinks, page, pageSize])
+    return visibleAssets.slice(start, start + pageSize)
+  }, [page, pageSize, visibleAssets])
 
   useEffect(() => {
     setPage(1)
-  }, [uniqueLinks.length])
+  }, [visibleAssets.length])
 
   const loadLinks = async () => {
     setLoading(true)
@@ -144,14 +180,14 @@ function LinkedAssetTab({
   }, [projectId, kind])
 
   useEffect(() => {
+    void loadAssets('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, kind])
+
+  useEffect(() => {
     if (linkModalOpen) void loadAssets('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkModalOpen, kind])
-
-  const linkedIdSet = useMemo(
-    () => new Set(links.map((l) => ('prop_id' in l ? l.prop_id : l.costume_id))),
-    [links],
-  )
   const available = useMemo(() => assets.filter((a) => !linkedIdSet.has(a.id)), [assets, linkedIdSet])
 
   const handleLink = async (assetId: string, assetName: string) => {
@@ -195,6 +231,19 @@ function LinkedAssetTab({
     }
   }
 
+  const handleDelete = async (asset: AssetItemLike) => {
+    setDeletingId(asset.id)
+    try {
+      await StudioEntitiesApi.remove(kind, asset.id)
+      message.success(`已删除${kind === 'prop' ? '道具' : '服装'}「${asset.name}」`)
+      await Promise.all([loadLinks(), loadAssets('')])
+    } catch (error) {
+      message.error(getApiErrorDetail(error, '删除失败'))
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <div className="h-full overflow-auto">
       <Card
@@ -220,21 +269,28 @@ function LinkedAssetTab({
           </Space>
         }
       >
-        {uniqueLinks.length === 0 && !loading ? (
-          <Empty description={`暂无项目${kind === 'prop' ? '道具' : '服装'}`} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        {visibleAssets.length === 0 && !loading && !listLoading ? (
+          <Empty description={`暂无${kind === 'prop' ? '道具' : '服装'}资产，可先新建或从资产库补充`} image={Empty.PRESENTED_IMAGE_SIMPLE} />
         ) : (
           <div className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {pagedLinks.map((l) => {
-              const assetId = 'prop_id' in l ? l.prop_id : l.costume_id
-              const asset = assetsById[assetId]
-              const linkThumb = (l as any).thumbnail as string | undefined
+            {pagedAssets.map((asset) => {
+              const link = linkByAssetId.get(asset.id)
+              const isLinked = Boolean(link)
+              const linkThumb = (link as any)?.thumbnail as string | undefined
               return (
                 <DisplayImageCard
-                  key={'prop_id' in l ? l.prop_id : l.costume_id}
-                  title={<div className="truncate">{asset?.name ?? assetId}</div>}
-                  imageUrl={resolveAssetUrl(linkThumb ?? asset?.thumbnail)}
-                  imageAlt={asset?.name ?? assetId}
+                  key={asset.id}
+                  title={
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="truncate">{asset.name}</div>
+                      <Tag color={isLinked ? 'green' : 'default'} className="shrink-0">
+                        {isLinked ? '已关联' : '未关联'}
+                      </Tag>
+                    </div>
+                  }
+                  imageUrl={resolveAssetUrl(linkThumb ?? asset.thumbnail)}
+                  imageAlt={asset.name}
                   extra={
                     <Space size="small">
                       <Button
@@ -244,35 +300,58 @@ function LinkedAssetTab({
                         onClick={() => {
                           const path =
                             kind === 'prop'
-                              ? `/assets/props/${assetId}/edit`
-                              : `/assets/costumes/${assetId}/edit`
+                              ? `/assets/props/${asset.id}/edit`
+                              : `/assets/costumes/${asset.id}/edit`
                           navigate(`${path}?returnTo=${encodeWorkbenchAssetEditReturnTo(projectId, workbenchTab)}`)
                         }}
                       >
                         编辑
                       </Button>
+                      {isLinked && link ? (
+                        <Button
+                          size="small"
+                          danger
+                          loading={unlinkingId === link.id}
+                          onClick={() => {
+                            Modal.confirm({
+                              title: `从当前项目移除「${asset.name}」？`,
+                              okText: '从项目移除',
+                              cancelText: '取消',
+                              okButtonProps: { danger: true },
+                              onOk: () => handleUnlink(link),
+                            })
+                          }}
+                        >
+                          从项目移除
+                        </Button>
+                      ) : (
+                        <Button type="primary" size="small" loading={linkingId === asset.id} onClick={() => handleLink(asset.id, asset.name)}>
+                          关联到项目
+                        </Button>
+                      )}
                       <Button
                         size="small"
-                        danger
-                        loading={unlinkingId === l.id}
+                        icon={<DeleteOutlined />}
+                        loading={deletingId === asset.id}
                         onClick={() => {
                           Modal.confirm({
-                            title: `取消关联「${asset?.name ?? assetId}」？`,
-                            okText: '取消关联',
+                            title: `彻底删除${kind === 'prop' ? '道具' : '服装'}「${asset.name}」？`,
+                            content: `这会删除${kind === 'prop' ? '道具' : '服装'}资产本体，不是仅从当前项目移除。`,
+                            okText: '彻底删除',
                             cancelText: '取消',
                             okButtonProps: { danger: true },
-                            onOk: () => handleUnlink(l),
+                            onOk: () => handleDelete(asset),
                           })
                         }}
                       >
-                        取消关联
+                        彻底删除
                       </Button>
                     </Space>
                   }
                   meta={
                     <div className="space-y-1">
-                      <div className="text-xs text-gray-600 line-clamp-2">{asset?.description ?? '—'}</div>
-                      <div className="text-xs text-gray-500 truncate">{`${kind}_id：${assetId}`}</div>
+                      <div className="text-xs text-gray-600 line-clamp-2">{asset.description ?? '—'}</div>
+                      <div className="text-xs text-gray-500 truncate">{`${kind}_id：${asset.id}`}</div>
                     </div>
                   }
                 />
@@ -283,7 +362,7 @@ function LinkedAssetTab({
               <Pagination
                 current={page}
                 pageSize={pageSize}
-                total={uniqueLinks.length}
+                total={visibleAssets.length}
                 showSizeChanger={false}
                 showTotal={(t) => `共 ${t} 条`}
                 onChange={(p, ps) => {

@@ -18,8 +18,9 @@ weight: 7
 
 执行层
 ├── FastAPI 负责创建任务与返回 task_id
-├── Redis 作为 Celery broker
-└── Celery Worker 执行长耗时任务
+├── Redis 作为 Celery broker（Celery 模式）
+├── Celery Worker 执行长耗时任务（Celery 模式）
+└── FastAPI 本地后台线程直接执行任务（local 模式）
 
 执行协议层
 ├── GenerationTask.task_kind
@@ -47,6 +48,7 @@ weight: 7
   - `elapsed_ms`
 - 前端不直接读取 Celery task 状态
 - Celery 只负责执行，不负责对前端暴露业务状态
+- 本地线程模式只改变执行载体，不改变 `GenerationTask` 作为真相源的职责
 - 任务投递统一使用 `task_kind` 识别具体执行器
 
 全局任务列表接口当前规则：
@@ -85,6 +87,14 @@ Broker：Redis
 
 - `DATABASE_URL` 继续指向 MySQL
 - `CELERY_BROKER_URL` 若未显式指定，则按 Redis 配置自动拼接
+- `TASK_EXECUTION_MODE` 当前支持：
+  - `auto`
+  - `local`
+  - `celery`
+- `TASK_EXECUTION_MODE=auto` 时：
+  - SQLite 默认走本地后台线程
+  - 非 SQLite 环境默认走 Celery
+- 本地开发若只启动 FastAPI + Vite，可使用 `auto` 或显式 `local`，避免任务长期停在 `pending 0%`
 - `backend/.env` 由 `app.config` 按绝对路径加载，避免 worker 因工作目录变化回退到默认 SQLite
 
 ## 已切到 Celery 的任务
@@ -150,14 +160,26 @@ Broker：Redis
 - 启动前取消请求会直接转 `cancelled`
 - 不再进入后续 provider / agent 调用
 
+图片生成任务还遵循以下运行时安全约束：
+
+- `GenerationTask.payload` 只持久化 `provider_id`，不持久化 API Key 或 API Secret
+- Worker 开始执行图片任务时，才按 `provider_id` 从供应商配置读取密钥
+- 供应商调用阶段的鉴权、网络断连与响应解析异常必须原样写入任务错误
+- 对“请求可能已被供应商接收、但响应连接中断”的失败不做自动重试，避免重复生成和重复扣费
+- OpenAI 兼容图片生成与编辑使用 SSE 流式响应，并解析最终 `completed` 图片事件；生成过程中的 partial event 同时用于避免长耗时请求被中转网关按空闲连接断开
+- 生成图片持久化为 `FileItem` 时，`storage_key` 必须使用存储层返回的真实 key；本地存储会返回 `local-file:` 前缀，下载接口依赖该前缀选择本地读取路径
+
 ## 当前 Celery 主链路特征
 
 当前主链采用：
 
 - API 层创建 `GenerationTask`
 - API 层写入 `task_kind`
-- 通过 `spawn_*_task(...)` 投递到 Celery
-- Celery 统一走 `task.execute(task_id)`
+- 通过 `spawn_*_task(...)` 投递到统一执行入口
+- 统一执行入口按 `TASK_EXECUTION_MODE` 选择：
+  - Celery
+  - 本地后台线程
+- 两种模式最终都走 `task.execute(task_id)`
 - worker 通过 `TaskExecutorRegistry` 按 `task_kind` 路由到具体 `WorkerTaskExecutor`
 - worker 执行后把状态与结果回写到 MySQL
 - 页面继续通过既有任务状态接口轮询和恢复

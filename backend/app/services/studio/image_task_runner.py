@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import base64
+import html
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_maker
 from app.core.task_manager import DeliveryMode, SqlAlchemyTaskStore, TaskManager
 from app.core.task_manager.types import TaskStatus
-from app.core.contracts.image_generation import ImageGenerationInput, ImageGenerationResult
-from app.core.contracts.provider import ProviderConfig
+from app.core.contracts.image_generation import ImageGenerationInput, ImageGenerationResult, ImageItem
 from app.core.tasks import ImageGenerationTask
 from app.models.studio import (
     ActorImage,
@@ -36,6 +38,8 @@ from app.services.studio.image_tasks import load_provider_config, resolve_image_
 from app.services.worker.async_task_support import cancel_if_requested_async
 from app.services.worker.task_logging import log_task_event, log_task_failure
 from app.utils.files import create_file_from_url_or_b64
+from app.models.studio import FileItem, FileType
+import uuid
 
 
 class _CreateOnlyTask:
@@ -43,6 +47,75 @@ class _CreateOnlyTask:
 
     async def run(self, *args: object, **kwargs: object):  # noqa: ANN001, ANN003
         return None
+
+
+def _allow_local_image_fallback() -> bool:
+    """仅在本地 SQLite 环境启用占位图兜底。"""
+
+    from app.config import settings
+
+    return (settings.database_url or "").strip().lower().startswith("sqlite")
+
+
+def _build_inline_svg_data(prompt: str) -> tuple[str, str]:
+    """构造轻量 SVG 占位图，便于本地环境继续走图像流程。"""
+
+    preview = html.escape((prompt or "").strip().replace("\n", " ")[:80] or "Local placeholder image")
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' width='1536' height='1024' viewBox='0 0 1536 1024'>"
+        "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
+        "<stop offset='0%' stop-color='#dbeafe'/><stop offset='100%' stop-color='#fde68a'/>"
+        "</linearGradient></defs>"
+        "<rect width='1536' height='1024' fill='url(#g)'/>"
+        "<rect x='88' y='88' width='1360' height='848' rx='36' fill='rgba(255,255,255,0.72)'/>"
+        "<text x='128' y='220' font-size='56' font-family='Arial, sans-serif' fill='#0f172a'>Local Placeholder Frame</text>"
+        f"<text x='128' y='320' font-size='32' font-family='Arial, sans-serif' fill='#334155'>{preview}</text>"
+        "</svg>"
+    )
+    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return encoded, f"data:image/svg+xml;base64,{encoded}"
+
+
+async def _persist_local_placeholder_image(
+    session: AsyncSession,
+    *,
+    task_id: str,
+    relation_type: str,
+    relation_entity_id: str,
+    prompt: str,
+) -> None:
+    """在无可用图片模型时，写入一张本地占位图。"""
+
+    encoded, data_url = _build_inline_svg_data(prompt)
+    file_obj = FileItem(
+        id=str(uuid.uuid4()),
+        type=FileType.image,
+        name=f"{relation_type}-{relation_entity_id}",
+        thumbnail=data_url,
+        tags=["local_placeholder"],
+        storage_key=f"inline-svg:{encoded}",
+    )
+    session.add(file_obj)
+    await session.flush()
+    await session.refresh(file_obj)
+
+    link_stmt = (
+        select(GenerationTaskLink)
+        .where(
+            GenerationTaskLink.task_id == task_id,
+            GenerationTaskLink.relation_type == relation_type,
+            GenerationTaskLink.relation_entity_id == relation_entity_id,
+        )
+        .limit(1)
+    )
+    link_row = (await session.execute(link_stmt)).scalars().first()
+    if link_row is not None:
+        link_row.file_id = file_obj.id
+
+    if relation_type == "shot_frame_image":
+        image_row = await session.get(ShotFrameImage, int(relation_entity_id))
+        if image_row is not None:
+            image_row.file_id = file_obj.id
 
     async def status(self) -> dict[str, object]:
         return {}
@@ -275,17 +348,27 @@ async def create_image_task_and_link(
     purpose: str = "generic",
     render_context: dict | None = None,
 ) -> str:
-    """创建图片生成任务，并建立任务关联。"""
+    """创建图片生成任务并建立关联，持久化数据中不包含供应商密钥。"""
     store = SqlAlchemyTaskStore(db)
     tm = TaskManager(store=store, strategies={})
 
     model = await resolve_image_model(db, model_id)
-    provider_cfg = await load_provider_config(db, model.provider_id)
+    try:
+        provider_cfg = await load_provider_config(db, model.provider_id)
+        provider_args = {
+            "provider": provider_cfg.provider,
+            "provider_id": model.provider_id,
+        }
+    except Exception:
+        if not _allow_local_image_fallback():
+            raise
+        provider_args = {
+            "provider": "local_placeholder",
+            "provider_id": None,
+        }
 
     run_args: dict = {
-        "provider": provider_cfg.provider,
-        "api_key": provider_cfg.api_key,
-        "base_url": provider_cfg.base_url,
+        **provider_args,
         "relation_type": relation_type,
         "relation_entity_id": relation_entity_id,
         "input": {
@@ -335,6 +418,11 @@ async def run_image_generation_task(
     task_id: str,
     run_args: dict,
 ) -> None:
+    """执行图片生成任务，并在运行时解析供应商密钥。
+
+    密钥只在当前进程内短暂存在，不进入 generation_tasks.payload。供应商调用
+    异常会原样写入任务错误，且不会自动重试连接已断开的生成请求，以免重复扣费。
+    """
     relation_type = str(run_args.get("relation_type") or "")
     relation_entity_id = str(run_args.get("relation_entity_id") or "")
 
@@ -350,23 +438,37 @@ async def run_image_generation_task(
                 return
 
             provider = str(run_args.get("provider") or "")
-            api_key = str(run_args.get("api_key") or "")
-            base_url = run_args.get("base_url")
             input_dict = dict(run_args.get("input") or {})
 
-            task = ImageGenerationTask(
-                provider_config=ProviderConfig(
-                    provider=provider,  # type: ignore[arg-type]
-                    api_key=api_key,
-                    base_url=base_url,
-                ),
-                input_=ImageGenerationInput.model_validate(input_dict),
-                timeout_s=300.0,
-            )
-            await task.run()
-            result = await task.get_result()
-            if result is None:
-                raise RuntimeError("Image generation task returned no result")
+            if provider == "local_placeholder":
+                encoded, _data_url = _build_inline_svg_data(str(input_dict.get("prompt") or ""))
+                result = ImageGenerationResult(
+                    images=[ImageItem(b64_json=encoded)],
+                    provider="local_placeholder",
+                    provider_task_id=task_id,
+                    status="succeeded",
+                )
+                await _persist_local_placeholder_image(
+                    session,
+                    task_id=task_id,
+                    relation_type=relation_type,
+                    relation_entity_id=relation_entity_id,
+                    prompt=str(input_dict.get("prompt") or ""),
+                )
+            else:
+                provider_id = str(run_args.get("provider_id") or "").strip()
+                if not provider_id:
+                    raise RuntimeError("Image generation task is missing provider_id")
+                provider_cfg = await load_provider_config(session, provider_id)
+                task = ImageGenerationTask(
+                    provider_config=provider_cfg,
+                    input_=ImageGenerationInput.model_validate(input_dict),
+                    timeout_s=300.0,
+                )
+                await task.run()
+                result = await task.get_result()
+                if result is None:
+                    raise RuntimeError("Image generation task returned no result")
             if await cancel_if_requested_async(store=store, task_id=task_id, session=session):
                 log_task_event("image_generation", task_id, "cancelled", stage="after_execute")
                 return
@@ -376,13 +478,14 @@ async def run_image_generation_task(
             if isinstance(render_context, dict):
                 result_payload["render_context"] = render_context
             await store.set_result(task_id, result_payload)
-            await _persist_images_to_assets(
-                session,
-                task_id=task_id,
-                relation_type=relation_type,
-                relation_entity_id=relation_entity_id,
-                result=result,
-            )
+            if provider != "local_placeholder":
+                await _persist_images_to_assets(
+                    session,
+                    task_id=task_id,
+                    relation_type=relation_type,
+                    relation_entity_id=relation_entity_id,
+                    result=result,
+                )
             if await cancel_if_requested_async(store=store, task_id=task_id, session=session):
                 log_task_event("image_generation", task_id, "cancelled", stage="after_persist")
                 return

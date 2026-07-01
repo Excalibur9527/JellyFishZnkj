@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -53,7 +53,7 @@ async def write_division_result_to_chapter(
     chapter_id: str,
     result: ScriptDivisionResult,
 ) -> None:
-    """将分镜结果写入指定章节；若章节已有镜头则拒绝写入。"""
+    """将分镜结果写入指定章节；若章节已有镜头则覆盖旧结果。"""
     await require_entity(
         db,
         Chapter,
@@ -62,12 +62,8 @@ async def write_division_result_to_chapter(
         status_code=400,
     )
 
-    existing = await db.execute(select(Shot.id).where(Shot.chapter_id == chapter_id).limit(1))
-    if existing.first() is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="Chapter already has shots; refusing to write (write_strategy=fail)",
-        )
+    await db.execute(delete(Shot).where(Shot.chapter_id == chapter_id))
+    await db.flush()
 
     _append_division_rows(db.add, chapter_id=chapter_id, result=result)
 
@@ -85,12 +81,8 @@ def write_division_result_to_chapter_sync(
     if chapter is None:
         raise HTTPException(status_code=400, detail=entity_not_found("Chapter"))
 
-    existing = db.execute(select(Shot.id).where(Shot.chapter_id == chapter_id).limit(1))
-    if existing.first() is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="Chapter already has shots; refusing to write (write_strategy=fail)",
-        )
+    db.execute(delete(Shot).where(Shot.chapter_id == chapter_id))
+    db.flush()
 
     _append_division_rows(db.add, chapter_id=chapter_id, result=result)
     db.flush()

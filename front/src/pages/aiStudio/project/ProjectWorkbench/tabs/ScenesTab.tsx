@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Empty, Input, Modal, Space, message, Pagination } from 'antd'
-import { EditOutlined, LinkOutlined, PlusOutlined } from '@ant-design/icons'
+import { Button, Card, Empty, Input, Modal, Space, Tag, message, Pagination } from 'antd'
+import { DeleteOutlined, EditOutlined, LinkOutlined, PlusOutlined } from '@ant-design/icons'
 import { useParams, useNavigate } from 'react-router-dom'
 import { StudioShotLinksService } from '../../../../../services/generated'
 import type { ProjectSceneLinkRead } from '../../../../../services/generated'
@@ -15,6 +15,16 @@ type SceneLike = {
   name: string
   description?: string | null
   thumbnail?: string
+}
+
+function getApiErrorDetail(error: unknown, fallback: string): string {
+  if (error && typeof error === 'object' && 'body' in error) {
+    const body = (error as { body?: { detail?: string; message?: string } }).body
+    if (typeof body?.detail === 'string' && body.detail.trim()) return body.detail
+    if (typeof body?.message === 'string' && body.message.trim()) return body.message
+  }
+  if (error instanceof Error && error.message.trim()) return error.message
+  return fallback
 }
 
 export function ScenesTab() {
@@ -32,6 +42,7 @@ export function ScenesTab() {
   const [search, setSearch] = useState('')
   const [linkingId, setLinkingId] = useState<string | null>(null)
   const [unlinkingId, setUnlinkingId] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(12)
@@ -49,14 +60,30 @@ export function ScenesTab() {
     return Array.from(seen.values())
   }, [links])
 
-  const pagedLinks = useMemo(() => {
+  const sceneLinkById = useMemo(() => {
+    const map = new Map<string, ProjectSceneLinkRead & { allLinkIds: number[] }>()
+    uniqueLinks.forEach((link) => map.set(link.scene_id, link))
+    return map
+  }, [uniqueLinks])
+
+  const linkedSceneIdSet = useMemo(() => new Set(links.map((l) => l.scene_id)), [links])
+
+  const visibleScenes = useMemo(() => {
+    const linkedScenes = uniqueLinks
+      .map((link) => scenes.find((scene) => scene.id === link.scene_id) ?? scenesById[link.scene_id])
+      .filter(Boolean) as SceneLike[]
+    const unlinkedScenes = scenes.filter((scene) => !linkedSceneIdSet.has(scene.id))
+    return [...linkedScenes, ...unlinkedScenes]
+  }, [linkedSceneIdSet, scenes, scenesById, uniqueLinks])
+
+  const pagedScenes = useMemo(() => {
     const start = (page - 1) * pageSize
-    return uniqueLinks.slice(start, start + pageSize)
-  }, [uniqueLinks, page, pageSize])
+    return visibleScenes.slice(start, start + pageSize)
+  }, [page, pageSize, visibleScenes])
 
   useEffect(() => {
     setPage(1)
-  }, [uniqueLinks.length])
+  }, [visibleScenes.length])
 
   const loadLinks = async () => {
     if (!projectId) return
@@ -124,11 +151,15 @@ export function ScenesTab() {
   }, [projectId])
 
   useEffect(() => {
+    void loadScenes('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  useEffect(() => {
     if (linkModalOpen) void loadScenes('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkModalOpen])
 
-  const linkedSceneIdSet = useMemo(() => new Set(links.map((l) => l.scene_id)), [links])
   const availableScenes = useMemo(() => scenes.filter((s) => !linkedSceneIdSet.has(s.id)), [scenes, linkedSceneIdSet])
 
   const toThumbUrl = (thumbnail?: string) => {
@@ -174,6 +205,19 @@ export function ScenesTab() {
     }
   }
 
+  const handleDeleteScene = async (scene: SceneLike) => {
+    setDeletingId(scene.id)
+    try {
+      await StudioEntitiesApi.remove('scene', scene.id)
+      message.success(`已删除场景「${scene.name}」`)
+      await Promise.all([loadLinks(), loadScenes('')])
+    } catch (error) {
+      message.error(getApiErrorDetail(error, '删除失败'))
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   if (!projectId) return null
 
   return (
@@ -201,19 +245,27 @@ export function ScenesTab() {
           </Space>
         }
       >
-        {uniqueLinks.length === 0 && !linksLoading ? (
-          <Empty description="暂无项目场景，可从资产库关联场景到本项目" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        {visibleScenes.length === 0 && !linksLoading && !scenesLoading ? (
+          <Empty description="暂无场景资产，可先新建或从资产库补充" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         ) : (
           <div className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {pagedLinks.map((l) => {
-              const s = scenesById[l.scene_id]
+            {pagedScenes.map((scene) => {
+              const link = sceneLinkById.get(scene.id)
+              const isLinked = Boolean(link)
               return (
                 <DisplayImageCard
-                  key={l.scene_id}
-                  title={<div className="truncate">{s?.name ?? l.scene_id}</div>}
-                  imageUrl={toThumbUrl(l.thumbnail ?? s?.thumbnail)}
-                  imageAlt={s?.name ?? l.scene_id}
+                  key={scene.id}
+                  title={
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="truncate">{scene.name}</div>
+                      <Tag color={isLinked ? 'green' : 'default'} className="shrink-0">
+                        {isLinked ? '已关联' : '未关联'}
+                      </Tag>
+                    </div>
+                  }
+                  imageUrl={toThumbUrl(link?.thumbnail ?? scene.thumbnail)}
+                  imageAlt={scene.name}
                   extra={
                     <Space size="small">
                       <Button
@@ -222,35 +274,61 @@ export function ScenesTab() {
                         icon={<EditOutlined />}
                         onClick={() =>
                           navigate(
-                            `/assets/scenes/${l.scene_id}/edit?returnTo=${encodeWorkbenchAssetEditReturnTo(projectId, 'scenes')}`,
+                            `/assets/scenes/${scene.id}/edit?returnTo=${encodeWorkbenchAssetEditReturnTo(projectId, 'scenes')}`,
                           )
                         }
                       >
                         编辑
                       </Button>
+                      {isLinked && link ? (
+                        <Button
+                          size="small"
+                          danger
+                          loading={unlinkingId === link.id}
+                          onClick={() => {
+                            Modal.confirm({
+                              title: `从当前项目移除「${scene.name}」？`,
+                              content:
+                                link.allLinkIds.length > 1
+                                  ? `该场景在本项目中有 ${link.allLinkIds.length} 条关联记录（含镜头级关联），将全部删除。`
+                                  : undefined,
+                              okText: '从项目移除',
+                              cancelText: '取消',
+                              okButtonProps: { danger: true },
+                              onOk: () => handleUnlinkScene(link),
+                            })
+                          }}
+                        >
+                          从项目移除
+                        </Button>
+                      ) : (
+                        <Button type="primary" size="small" loading={linkingId === scene.id} onClick={() => handleLinkScene(scene)}>
+                          关联到项目
+                        </Button>
+                      )}
                       <Button
                         size="small"
-                        danger
-                        loading={unlinkingId === l.id}
+                        icon={<DeleteOutlined />}
+                        loading={deletingId === scene.id}
                         onClick={() => {
                           Modal.confirm({
-                            title: `取消关联「${s?.name ?? l.scene_id}」？`,
-                            content: l.allLinkIds.length > 1 ? `该场景在本项目中有 ${l.allLinkIds.length} 条关联记录（含镜头级关联），将全部删除。` : undefined,
-                            okText: '取消关联',
+                            title: `彻底删除场景「${scene.name}」？`,
+                            content: '这会删除场景资产本体，不是仅从当前项目移除。',
+                            okText: '彻底删除',
                             cancelText: '取消',
                             okButtonProps: { danger: true },
-                            onOk: () => handleUnlinkScene(l),
+                            onOk: () => handleDeleteScene(scene),
                           })
                         }}
                       >
-                        取消关联
+                        彻底删除
                       </Button>
                     </Space>
                   }
                   meta={
                     <div className="space-y-1">
-                      <div className="text-xs text-gray-600 line-clamp-2">{s?.description ?? '—'}</div>
-                      <div className="text-xs text-gray-500 truncate">scene_id：{l.scene_id}</div>
+                      <div className="text-xs text-gray-600 line-clamp-2">{scene.description ?? '—'}</div>
+                      <div className="text-xs text-gray-500 truncate">scene_id：{scene.id}</div>
                     </div>
                   }
                 />
@@ -261,7 +339,7 @@ export function ScenesTab() {
               <Pagination
                 current={page}
                 pageSize={pageSize}
-                total={uniqueLinks.length}
+                total={visibleScenes.length}
                 showSizeChanger={false}
                 showTotal={(t) => `共 ${t} 条`}
                 onChange={(p, ps) => {

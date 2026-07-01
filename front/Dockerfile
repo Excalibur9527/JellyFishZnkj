@@ -13,7 +13,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # 构建时注入后端地址（可通过 docker build --build-arg 覆盖）
-ARG VITE_API_BASE_URL=http://localhost:8000
+ARG VITE_API_BASE_URL=http://localhost:8765
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 ENV VITE_BACKEND_URL=$VITE_API_BASE_URL
 

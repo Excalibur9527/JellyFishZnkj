@@ -10,7 +10,7 @@ description: "启动前后端并完成本地联调。"
 cd backend
 cp .env.example .env
 uv sync
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8765
 ```
 
 ## 启动前端
@@ -23,9 +23,9 @@ pnpm dev
 
 ## 默认端口
 
-- 前端：`http://localhost:7788`
-- 后端：`http://localhost:8000`
-- Swagger：`http://localhost:8000/docs`
+- 前端：`http://localhost:5678`
+- 后端：`http://localhost:8765`
+- Swagger：`http://localhost:8765/docs`
 
 ## OpenAPI 更新
 

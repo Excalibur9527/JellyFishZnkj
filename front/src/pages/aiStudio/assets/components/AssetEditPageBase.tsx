@@ -292,9 +292,20 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
         setSmartDetectIssues(issues)
         setSmartDetectOptimizedDesc(optimizedDesc)
         setSmartDetectFingerprint(fingerprint)
+        if (optimizedDesc) {
+          setFormDesc(optimizedDesc)
+        }
+        if ((relationType === 'character_image' || relationType === 'actor_image') && fingerprint) {
+          setFormVisualFingerprint(fingerprint)
+        }
         setSmartDetectOpen(true)
-        if (issues.length > 0) message.warning(`发现 ${issues.length} 项可能缺失信息`)
-        else message.success('未发现缺失信息')
+        if (optimizedDesc) {
+          message.success(`已自动填入${fingerprint ? '描述与视觉指纹' : '描述'}，请记得保存基础信息`)
+        } else if (issues.length > 0) {
+          message.warning(`发现 ${issues.length} 项可能缺失信息`)
+        } else {
+          message.success('未发现缺失信息')
+        }
       },
       onFailed: (errorMessage) => {
         message.error(errorMessage)
@@ -490,7 +501,7 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
 
     const description = (formDesc || '').trim()
     if (!description) {
-      if (relationType === 'actor_image') message.warning('请先输入演员描述再进行智能检测')
+      if (relationType === 'actor_image') message.warning('请先输入演员描述。当前智能检测基于描述文本生成，不会直接读取已上传图片')
       else if (relationType === 'scene_image') message.warning('请先输入场景描述再进行智能检测')
       else if (relationType === 'prop_image') message.warning('请先输入道具描述再进行智能检测')
       else if (relationType === 'costume_image') message.warning('请先输入服装描述再进行智能检测')
@@ -1060,7 +1071,7 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
                               if (!slot.image || !assetId) return
                               try {
                                 const res = await StudioFilesService.uploadFileApiApiV1StudioFilesUploadPost({
-                                  formData: { file: file as unknown as string },
+                                  formData: { file: file as any },
                                 })
                                 const fileId = res.data?.id
                                 if (!fileId) throw new Error('上传未返回文件 ID')
@@ -1068,9 +1079,10 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
                                 await refreshImages()
                                 message.success('图片上传成功')
                                 onSuccess?.({})
-                              } catch {
-                                message.error('图片上传失败')
-                                onError?.(new Error('上传失败'))
+                              } catch (error) {
+                                const text = defaultTaskActionErrorMessage(error, '图片上传失败')
+                                message.error(text)
+                                onError?.(new Error(text))
                               }
                             }}
                           >
