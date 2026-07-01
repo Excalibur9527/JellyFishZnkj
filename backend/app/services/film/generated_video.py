@@ -85,15 +85,15 @@ async def preview_prompt_and_images(
     prompt: str | None,
     images: list[str] | None = None,
 ) -> tuple[str, list[str], dict | None]:
-    model = await resolve_default_video_model(db)
-    provider_cfg = await load_provider_config_by_model(db, model)
-    try:
-        validate_video_reference_mode_support(
-            provider=provider_cfg.provider,
-            reference_mode=reference_mode,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    provider_cfg = await _load_preview_provider_config_if_available(db)
+    if provider_cfg is not None:
+        try:
+            validate_video_reference_mode_support(
+                provider=provider_cfg.provider,
+                reference_mode=reference_mode,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     shot_detail = await validate_shot_and_duration(db, shot_id)
     base = build_video_base_draft(shot_id=shot_id, prompt=prompt)
@@ -111,6 +111,23 @@ async def preview_prompt_and_images(
         pack = prompt_preview_payload.get("pack")
         return submission.prompt, submission.images, pack if isinstance(pack, dict) else None
     return submission.prompt, submission.images, None
+
+
+async def _load_preview_provider_config_if_available(db: AsyncSession) -> ProviderConfig | None:
+    """为视频提示词预览尽量加载供应商能力，加载失败时不阻断 prompt 渲染。
+
+    预览弹窗的职责是让用户看到当前镜头会如何组织成视频提示词；默认视频
+    模型缺失应由准备度与提交阶段明确阻断，而不是让预览区域变成空白。
+    如果当前默认模型和供应商可用，则仍然提前校验 reference_mode 能力。
+    """
+
+    try:
+        model = await resolve_default_video_model(db)
+        return await load_provider_config_by_model(db, model)
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            return None
+        raise
 
 
 async def resolve_default_video_model(db: AsyncSession) -> Model:

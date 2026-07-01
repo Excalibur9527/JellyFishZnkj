@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     AsyncEngine,
@@ -60,7 +61,7 @@ class Base(DeclarativeBase):
 
 
 async def init_db() -> None:
-    """创建所有表（开发/迁移用）。"""
+    """创建所有表，并补齐无迁移框架时期新增的兼容字段。"""
     # 确保 ORM 模型已导入，从而注册到 Base.metadata
     import app.models.llm  # noqa: F401  # pylint: disable=unused-import
     import app.models.studio  # noqa: F401
@@ -69,6 +70,12 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        columns = await conn.run_sync(
+            lambda sync_conn: {item["name"] for item in inspect(sync_conn).get_columns("shot_frame_images")}
+        )
+        if "reference_assets" not in columns:
+            # 现有开发库由 create_all 管理；create_all 不会给旧表补列，因此在启动时幂等补齐。
+            await conn.execute(text("ALTER TABLE shot_frame_images ADD COLUMN reference_assets JSON"))
 
 
 async def close_db() -> None:

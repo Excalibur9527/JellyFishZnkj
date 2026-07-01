@@ -10,7 +10,7 @@ from app.services.studio.generation.shared.types import GenerationDerivedPreview
 FRAME_FACE_INTEGRITY_LIVE_ACTION = (
     "人物面部约束：如画面中有人物，必须保留清晰可辨的完整自然五官；"
     "不要生成无脸、遮脸、背影替代、面部模糊或五官缺失；"
-    "画面应呈现高质量影视级写实质感，保持参考图中人物的面部特征、气质与外貌细节；"
+    "画面可以呈现高质量影视级写实质感，但人物脸部必须直接比照角色参考图的图像本身，不能只根据文字描述想象新面孔；"
     "不要模仿任何真实个人、明星、公众人物或版权角色。"
 )
 
@@ -18,7 +18,7 @@ FRAME_FACE_INTEGRITY_LIVE_ACTION = (
 FRAME_FACE_INTEGRITY_ANIME = (
     "人物面部约束：如画面中有人物，必须保留清晰可辨的原创虚构人脸和完整自然五官；"
     "不要生成无脸、遮脸、背影替代、面部模糊或五官缺失；"
-    "画面应是高质量影视概念参考图，保留原创角色的风格化设计感，避免真实摄影照片、街拍或真人抓拍质感；"
+    "画面应是高质量影视概念参考图，保留原创角色的风格化设计感，避免真实摄影照片、街拍、证件照或真人抓拍质感；"
     "不要模仿任何真实个人、明星、公众人物或版权角色。"
 )
 
@@ -26,9 +26,31 @@ FRAME_FACE_INTEGRITY_ANIME = (
 FRAME_ORIGINAL_FACE_INTEGRITY_PROMPT = FRAME_FACE_INTEGRITY_ANIME
 
 
-def _face_integrity_prompt_for_style(visual_style: str | None) -> str:
-    """根据项目视觉风格返回对应的人物面部约束。
+def _character_identity_lock_prompt(mappings: list[ShotFramePromptMappingRead]) -> str:
+    """生成角色身份锁定规则，避免非角色参考图或剧情重绘改变人脸。
 
+    仅当存在 character 参考图时追加。相比通用“保持参考图人物”，这里明确
+    指定角色图是唯一身份来源，并把脸型、五官比例、眼型等身份锚点拆开写，
+    降低模型把服装图、场景图或剧情人物重新融合成另一张脸的概率。
+    """
+
+    character_refs = [mapping for mapping in mappings if mapping.type == "character"]
+    if not character_refs:
+        return ""
+    labels = "、".join(f"{mapping.token}（{mapping.name}）" for mapping in character_refs)
+    return (
+        f"人物身份锁定：{labels}共同定义各自对应角色的人物身份与脸部特征；"
+        "请按同一位角色演员在当前镜头中连续出演来生成，而不是生成相似演员或重新设计角色；"
+        "身份判断必须以输入参考图的可见图像为准，文字中的脸型、五官、发型、气质等词只作为核对维度，不作为重新想象人物外貌的描述词；"
+        "只允许因当前镜头表情、视线方向、光线和机位角度产生自然变化，脸部结构、五官比例和年龄感必须与角色参考图连续一致；"
+        "服装、场景、道具参考图中若出现人脸或人物，均不得作为身份来源。"
+    )
+
+
+def _face_integrity_prompt_for_style(visual_style: str | None, mappings: list[ShotFramePromptMappingRead] | None = None) -> str:
+    """根据项目视觉风格返回人物面部质量约束。
+
+    身份锁定已前置到参考图使用规则中，避免被较长的导演与剧情描述冲淡。
     现实（live_action）风格用写实影视约束；其余风格（动漫等）用原有风格化约束。
     """
     style = (visual_style or "").strip().lower()
@@ -42,16 +64,14 @@ def replace_reference_names_in_prompt(
     base_prompt: str,
     mappings: list[ShotFramePromptMappingRead],
 ) -> str:
-    """将提示词中的实体名称替换为稳定的图片 token。"""
+    """保留旧入口但不再替换剧情正文中的实体名。
+
+    早期实现会把“艾铃”这类角色名替换成“图1”，方便模型把文字与参考图
+    建立联系。但在真实首帧 prompt 中，这会把剧情句子改成“图1原本是……”
+    这类不自然表达，导致模型同时把图号当角色、当图片引用，反而削弱身份
+    和服装约束。现在图号只出现在参考图说明区，剧情正文保持原始角色名。
+    """
     text = (base_prompt or "").strip()
-    replace_pairs = [
-        ((mapping.name or "").strip(), mapping.token)
-        for mapping in mappings
-        if (mapping.name or "").strip()
-    ]
-    replace_pairs.sort(key=lambda item: len(item[0]), reverse=True)
-    for name, token in replace_pairs:
-        text = text.replace(name, token)
     return text
 
 
@@ -65,6 +85,77 @@ def should_apply_face_integrity_prompt(
         return True
     text = str(prompt or "")
     return any(keyword in text for keyword in ("人物", "角色", "主角", "男人", "女人", "男孩", "女孩", "他", "她"))
+
+
+def _reference_usage_rule(mapping: ShotFramePromptMappingRead) -> str:
+    """生成单张参考图的类型化使用规则，避免多参考图互相污染。
+
+    分镜帧生成通常同时携带角色、服装、场景与道具参考图。模型若只看到
+    “图1/图2”名称，容易把服装图里的人脸、场景图里的人物或道具图背景
+    混入结果，因此这里按资产类型明确“取什么 / 忽略什么”。
+    """
+
+    input_label = mapping.token.removeprefix("图") if mapping.token.startswith("图") else mapping.token
+    label = f"第{input_label}张输入参考图（{mapping.token}，{mapping.name}）"
+    if mapping.type == "character":
+        return (
+            f"{label}是角色身份参考：只以该图确定对应人物的脸型、五官、发型、气质、体态与身份一致性；"
+            "必须保持脸型轮廓、五官比例、眼型、鼻型、嘴型、下巴轮廓、发际线和神态气质；"
+            "不要把该图里的临时背景、临时姿势或非当前镜头服装当成硬约束。"
+        )
+    if mapping.type == "costume":
+        return (
+            f"{label}是服装参考：只提取服装款式、颜色、纹样、材质与层次；"
+            "必须逐项保持参考服装的主色、辅色、纹样、材质和层次；"
+            "即使剧情出现婚礼、嫁娶、大婚或退婚等语义，也不得把服装默认改成红色婚服或其他剧本常识服装；"
+            "若该服装图的头脸区域被遮挡或涂抹，这是系统为避免换脸做的身份隔离处理，不要补全、借用或参考被遮挡的人脸；"
+            "必须忽略该图中的人脸、发型、身体姿势、手持物、背景与场景。"
+        )
+    if mapping.type == "scene":
+        return (
+            f"{label}是场景参考：只提取空间结构、时代氛围、光线、色调、背景陈设与环境质感；"
+            "必须忽略该图中的人物、脸、服装、动作和临时道具，除非这些对象另有独立参考图。"
+        )
+    if mapping.type == "prop":
+        return (
+            f"{label}是道具参考：只提取道具造型、材质、尺寸感、颜色与使用方式；"
+            "必须忽略该图中的人物、手、脸、服装、背景和摆拍环境。"
+        )
+    return f"{label}是参考图：只提取与其资产类型相关的信息，忽略无关人物、背景和临时姿势。"
+
+
+def build_frame_reference_usage_contract(mappings: list[ShotFramePromptMappingRead]) -> list[str]:
+    """构建分镜帧参考图使用契约。
+
+    返回值会进入最终图片 prompt，用统一优先级约束多参考图融合：
+    角色负责身份，服装负责穿着，场景负责环境，道具负责物件。
+    """
+
+    if not mappings:
+        return []
+
+    rules: list[str] = []
+    identity_lock = _character_identity_lock_prompt(mappings)
+    if identity_lock:
+        rules.append(identity_lock)
+    rules.extend(_reference_usage_rule(mapping) for mapping in mappings)
+    present_types = {mapping.type for mapping in mappings}
+    priority_parts: list[str] = []
+    if "character" in present_types:
+        priority_parts.append("人物身份、脸型、五官、发型和气质以角色参考图为最高优先级")
+    if "costume" in present_types:
+        priority_parts.append("服装款式、颜色、纹样和材质以服装参考图为最高优先级")
+    if "scene" in present_types:
+        priority_parts.append("空间结构、光线和环境陈设以场景参考图为最高优先级")
+    if "prop" in present_types:
+        priority_parts.append("道具造型、材质和使用方式以道具参考图为最高优先级")
+    if priority_parts:
+        rules.append(f"参考图冲突处理：{'；'.join(priority_parts)}；不同类型参考图不得互相覆盖职责。")
+    if "character" in present_types and any(t in present_types for t in ("costume", "scene", "prop")):
+        rules.append("身份一致性硬规则：非角色参考图中若出现人脸或人物，必须视为无关信息，不得改变角色参考图确定的人脸与身份。")
+    if "costume" in present_types:
+        rules.append("服装一致性硬规则：服装参考图的颜色、款式、纹样和层次优先于剧情词、时代词与类型片常识；不得因为“大婚”“婚房”“嫁娶”等文字把服装自动改红或替换为其他婚服。")
+    return rules
 
 
 def append_frame_face_integrity_prompt(
@@ -87,7 +178,7 @@ def append_frame_face_integrity_prompt(
         return text
     if not should_apply_face_integrity_prompt(prompt=text, mappings=mappings):
         return text
-    integrity_prompt = _face_integrity_prompt_for_style(visual_style)
+    integrity_prompt = _face_integrity_prompt_for_style(visual_style, mappings)
     if not text:
         return integrity_prompt
     return f"{text}\n{integrity_prompt}".strip()
@@ -363,6 +454,11 @@ def compose_shot_frame_rendered_prompt(
         lines.append("## 图片内容说明")
         for mapping in mappings:
             lines.append(f"{mapping.token}: {mapping.name}")
+        usage_contract = build_frame_reference_usage_contract(mappings)
+        if usage_contract:
+            lines.append("")
+            lines.append("## 参考图使用规则")
+            lines.extend(usage_contract)
         lines.append("")
     lines.append("## 生成内容")
     lines.append((replaced_prompt or "").strip())

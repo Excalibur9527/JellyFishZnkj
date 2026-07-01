@@ -214,6 +214,40 @@ async def test_preview_prompt_and_images_prefers_request_images_when_provided() 
 
 
 @pytest.mark.asyncio
+async def test_preview_prompt_and_images_still_renders_when_default_video_model_missing() -> None:
+    """视频提示词预览不应因默认视频模型失效而空白。
+
+    准备度和正式提交阶段仍会阻断缺失模型；但预览用于让用户确认镜头文本、
+    参考帧和连续性上下文，模型配置问题不应吞掉可读 prompt。
+    """
+
+    db, engine = await _build_session()
+    async with db:
+        await _seed_shot_graph(db)
+        settings = ModelSettings(id=1, default_video_model_id="missing-video-model")
+        db.add_all(
+            [
+                settings,
+                ShotFrameImage(shot_detail_id="s1", frame_type=ShotFrameType.first, file_id="f1", format="png"),
+            ]
+        )
+        await db.commit()
+
+        prompt, images, pack = await preview_prompt_and_images(
+            db,
+            shot_id="s1",
+            reference_mode="first",
+            prompt=None,
+        )
+
+        assert "镜头标题：镜头一" in prompt
+        assert "剧本摘录：林川推门而入。" in prompt
+        assert images == ["f1"]
+        assert pack is not None
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_preview_prompt_and_images_rejects_provider_unsupported_reference_mode() -> None:
     db, engine = await _build_session()
     async with db:

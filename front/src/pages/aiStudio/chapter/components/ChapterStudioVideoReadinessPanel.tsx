@@ -9,6 +9,26 @@ type ChapterStudioVideoReadinessPanelProps = {
   videoReferenceMode: string
 }
 
+const READINESS_LABELS: Record<string, string> = {
+  extraction_ready: '信息提取确认',
+  duration_ready: '镜头时长',
+  prompt_ready: '视频提示词',
+  reference_frames_ready: '参考帧',
+  video_model_ready: '视频模型',
+  provider_ready: '模型供应商',
+  no_active_video_task: '任务占用状态',
+}
+
+/**
+ * 将后端稳定检查 key 转为面向用户的准备度名称。
+ *
+ * key 仍作为前后端契约保留，但界面不直接暴露内部英文标识，避免用户只能
+ * 看到 extraction_ready / provider_ready 而不知道应处理什么。
+ */
+function readinessLabel(key: string): string {
+  return READINESS_LABELS[key] ?? key
+}
+
 export function ChapterStudioVideoReadinessPanel({
   selectedShot,
   videoReadinessLoading,
@@ -51,7 +71,7 @@ export function ChapterStudioVideoReadinessPanel({
             {(videoReadiness.checks ?? []).map((check) => (
               <Tooltip key={check.key} title={check.message}>
                 <Tag color={check.ok ? 'green' : 'default'}>
-                  {check.ok ? '通过' : '未通过'} · {check.key}
+                  {check.ok ? '通过' : '未通过'} · {readinessLabel(check.key)}
                 </Tag>
               </Tooltip>
             ))}

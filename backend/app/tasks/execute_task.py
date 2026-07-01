@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from threading import Thread
 from types import SimpleNamespace
 
@@ -18,7 +19,7 @@ from celery.result import AsyncResult
 from app.config import settings
 from app.core.celery_app import celery_app
 from app.core.db_sync import sync_session_maker
-from app.models.task import GenerationTask
+from app.models.task import GenerationTask, GenerationTaskStatus
 from app.services.worker.task_registry import task_executor_registry
 
 logger = logging.getLogger(__name__)
@@ -27,13 +28,54 @@ logger = logging.getLogger(__name__)
 def _record_executor_dispatch(task_id: str, *, executor_type: str, executor_task_id: str | None) -> None:
     """回写任务执行器信息，便于 UI 展示与排障定位。"""
 
-    with sync_session_maker() as db:
-        row = db.get(GenerationTask, task_id)
-        if row is None:
-            return
-        row.executor_type = executor_type
-        row.executor_task_id = executor_task_id
-        db.commit()
+    try:
+        with sync_session_maker() as db:
+            row = db.get(GenerationTask, task_id)
+            if row is None:
+                return
+            row.executor_type = executor_type
+            row.executor_task_id = executor_task_id
+            db.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "failed to record task executor dispatch, task will still run: task_id=%s executor_type=%s",
+            task_id,
+            executor_type,
+            exc_info=True,
+        )
+
+
+def _mark_local_dispatch_failure(task_id: str, *, error: str) -> None:
+    """本地线程启动后若执行入口异常，尽量把任务从 pending 转为 failed。
+
+    本地开发环境没有独立 Celery worker。若后台线程在读取任务或执行器分派时
+    发生数据库锁等异常，不能只让线程静默退出，否则页面会长期看到 pending。
+    """
+
+    try:
+        with sync_session_maker() as db:
+            row = db.get(GenerationTask, task_id)
+            if row is None:
+                return
+            if str(row.status) in {"succeeded", "failed", "cancelled"}:
+                return
+            row.status = GenerationTaskStatus.failed.value
+            row.progress = max(int(row.progress or 0), 10)
+            row.error = error[:1000]
+            row.finished_at = datetime.utcnow()
+            db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to mark local task dispatch failure: task_id=%s", task_id)
+
+
+def _run_task_local_entry(task_id: str) -> None:
+    """本地线程执行入口，负责捕获同步执行器抛出的异常。"""
+
+    try:
+        run_task_celery(task_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("local task execution failed before worker handled task: task_id=%s", task_id)
+        _mark_local_dispatch_failure(task_id, error=str(exc) or exc.__class__.__name__)
 
 
 def _should_execute_locally() -> bool:
@@ -63,7 +105,7 @@ def _run_task_local(task_id: str) -> SimpleNamespace:
 
     thread_name = f"local-task-{task_id[:8]}"
     worker = Thread(
-        target=run_task_celery,
+        target=_run_task_local_entry,
         args=(task_id,),
         name=thread_name,
         daemon=True,

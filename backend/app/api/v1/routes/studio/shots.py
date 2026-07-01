@@ -62,6 +62,7 @@ from app.services.studio.generation.video import (
     derive_video_preview,
 )
 from app.services.studio.generation.video.derive_preview import to_shot_video_prompt_preview_read
+from app.services.studio.task_recovery import expire_stale_image_tasks
 from app.schemas.common import ApiResponse, PaginatedData, created_response, empty_response, success_response
 from app.schemas.skills.script_processing import StudioScriptExtractionDraft
 from app.services.studio.shot_extraction_draft import build_script_extraction_draft_for_shot
@@ -164,6 +165,7 @@ async def list_shot_runtime_summary(
     chapter_id: str = Query(..., description="章节 ID"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[list[ShotRuntimeSummaryRead]]:
+    await expire_stale_image_tasks(db)
     rows = await list_shot_runtime_summary_by_chapter(db, chapter_id=chapter_id)
     return success_response(rows)
 

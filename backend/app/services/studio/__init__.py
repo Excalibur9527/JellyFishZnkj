@@ -23,6 +23,7 @@ from app.services.studio.image_task_references import (
     pick_ordered_ref_file_ids,
     resolve_reference_file_ids_and_names_from_linked_items,
     resolve_reference_image_refs_by_file_ids,
+    resolve_shot_frame_reference_image_refs,
 )
 from app.services.studio.generation.asset_image import (
     build_actor_image_base_draft,
@@ -203,6 +204,7 @@ __all__ = [
     "resolve_thumbnail_infos",
     "resolve_reference_file_ids_and_names_from_linked_items",
     "resolve_reference_image_refs_by_file_ids",
+    "resolve_shot_frame_reference_image_refs",
     "create_shot_detail",
     "get_shot_detail",
     "update_shot_detail",

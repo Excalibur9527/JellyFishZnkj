@@ -112,7 +112,7 @@ import { ChapterStudioVideoReadinessPanel } from './components/ChapterStudioVide
 import { useGenerationDraft, type GenerationDraftState } from '../hooks/useGenerationDraft'
 import { useTaskPageContext } from '../components/taskPageContext'
 import type { RelationTaskState } from '../project/ProjectWorkbench/chapterDivisionTasks'
-import { toRelationTaskStateFromStatusRead } from '../project/ProjectWorkbench/chapterDivisionTasks'
+import { isActiveTaskStatus, toRelationTaskStateFromStatusRead } from '../project/ProjectWorkbench/chapterDivisionTasks'
 import { useProjectStyleOptions } from '../project/useProjectStyleOptions'
 import './chapterStudio.separation.css'
 
@@ -142,6 +142,33 @@ type VideoPromptDerived = {
   prompt: string
   images: string[]
   pack: ShotVideoPromptPackRead | null
+}
+
+/**
+ * 根据当前镜头已有帧构造视频参考输入。
+ *
+ * 未显式选择时优先采用首帧，其次尾帧、关键帧；只有确实没有参考帧时
+ * 才回退到 text_only，避免工作室在已有首帧的情况下静默做纯文本检查。
+ */
+function buildVideoReferenceSelection(
+  frameImages: ShotFrameImageRead[],
+  requestedMode?: string,
+): { referenceMode: VideoReferenceMode; images: string[] } {
+  const first = frameImages.find((item) => item.frame_type === 'first')?.file_id ?? null
+  const last = frameImages.find((item) => item.frame_type === 'last')?.file_id ?? null
+  const key = frameImages.find((item) => item.frame_type === 'key')?.file_id ?? null
+  const mode = requestedMode || (first ? 'first' : last ? 'last' : key ? 'key' : 'text_only')
+
+  if (mode === 'first_last_key' && first && last && key) {
+    return { referenceMode: 'first_last_key', images: [first, last, key] }
+  }
+  if (mode === 'first_last' && first && last) {
+    return { referenceMode: 'first_last', images: [first, last] }
+  }
+  if (mode === 'first' && first) return { referenceMode: 'first', images: [first] }
+  if (mode === 'last' && last) return { referenceMode: 'last', images: [last] }
+  if (mode === 'key' && key) return { referenceMode: 'key', images: [key] }
+  return { referenceMode: 'text_only', images: [] }
 }
 
 function normalizeFrameExclusiveTags(tags: string[]): string[] {
@@ -1136,38 +1163,9 @@ const ChapterStudio: React.FC = () => {
               : d?.key_frame_prompt) ?? ''
         if (!String(prompt || '').trim()) continue
 
-        const linked = await StudioShotsService.listShotLinkedAssetsApiV1StudioShotsShotIdLinkedAssetsGet({
-          shotId: id,
-          page: 1,
-          pageSize: 100,
-        })
-        const items = (linked.data?.items ?? []) as any[]
-        const extractFileId = (thumbnail?: string | null): string | null => {
-          const v = (thumbnail || '').trim()
-          if (!v) return null
-          if (!v.includes('/') && !v.includes(':')) return v
-          try {
-            const url = new URL(v, typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
-            const m = url.pathname.match(/\/api\/v1\/studio\/files\/([^/]+)\/download\/?$/)
-            if (m?.[1]) return decodeURIComponent(m[1])
-          } catch {
-            // ignore
-          }
-          return null
-        }
-        const imagesPayload = items
-          .map((x) => {
-            const fileId = typeof x?.file_id === 'string' && x.file_id.trim() ? x.file_id.trim() : extractFileId(x?.thumbnail)
-            return fileId
-              ? {
-                  type: x?.type as any,
-                  id: String(x?.id ?? ''),
-                  name: String(x?.name ?? x?.id ?? ''),
-                  file_id: fileId,
-                }
-              : null
-          })
-          .filter(Boolean)
+        const imagesPayload = Array.isArray((target as any).reference_assets)
+          ? (target as any).reference_assets
+          : []
         const targetRatio = resolveShotVideoRatio(d)
         if (!targetRatio) continue
         await StudioImageTasksService.createShotFrameImageGenerationTaskApiV1StudioImageTasksShotShotIdFrameImageTasksPost({
@@ -1292,13 +1290,10 @@ const ChapterStudio: React.FC = () => {
 
   const generateFrameImageTask = async () => {
     if (!selectedShotId) return
-    const target =
-      (frameTab === 'head' && frameImages.find((x) => x.frame_type === 'first')) ||
-      (frameTab === 'tail' && frameImages.find((x) => x.frame_type === 'last')) ||
-      frameImages.find((x) => x.frame_type === 'key') ||
-      frameImages[0]
+    const targetFrameType = frameTab === 'head' ? 'first' : frameTab === 'tail' ? 'last' : 'key'
+    const target = frameImages.find((x) => x.frame_type === targetFrameType)
     if (!target) {
-      message.warning('请先添加一张分镜帧图（frame image）')
+      message.warning('请先为当前帧配置参考素材')
       return
     }
     const prompt =
@@ -1313,38 +1308,9 @@ const ChapterStudio: React.FC = () => {
     }
     setGenerating(true)
     try {
-      const linked = await StudioShotsService.listShotLinkedAssetsApiV1StudioShotsShotIdLinkedAssetsGet({
-        shotId: selectedShotId,
-        page: 1,
-        pageSize: 100,
-      })
-      const items = (linked.data?.items ?? []) as any[]
-      const extractFileId = (thumbnail?: string | null): string | null => {
-        const v = (thumbnail || '').trim()
-        if (!v) return null
-        if (!v.includes('/') && !v.includes(':')) return v
-        try {
-          const url = new URL(v, typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
-          const m = url.pathname.match(/\/api\/v1\/studio\/files\/([^/]+)\/download\/?$/)
-          if (m?.[1]) return decodeURIComponent(m[1])
-        } catch {
-          // ignore
-        }
-        return null
-      }
-      const imagesPayload = items
-        .map((x) => {
-          const fileId = typeof x?.file_id === 'string' && x.file_id.trim() ? x.file_id.trim() : extractFileId(x?.thumbnail)
-          return fileId
-            ? {
-                type: x?.type as any,
-                id: String(x?.id ?? ''),
-                name: String(x?.name ?? x?.id ?? ''),
-                file_id: fileId,
-              }
-            : null
-        })
-        .filter(Boolean)
+      const imagesPayload = Array.isArray((target as any).reference_assets)
+        ? (target as any).reference_assets
+        : []
       const targetRatio = resolveShotVideoRatio(shotDetail)
       if (!targetRatio) {
         message.warning('请先设置视频比例')
@@ -2950,18 +2916,12 @@ function Inspector(props: {
     dialogLines,
     frameImages,
     sceneLinks,
-    propLinks,
-    costumeLinks,
     shotCharacterLinks,
     shotCandidateItems,
     shotDialogueCandidateItems,
     cameraUpdating,
     promptAssetsUpdating,
     onDeleteDialogLine,
-    onUpdatePromptScene,
-    onUpdatePromptActors,
-    onUpdatePromptProps,
-    onUpdatePromptCostumes,
     selectedShot,
     onUpdateShotTitle,
     onUpdateShotScriptExcerpt,
@@ -2989,7 +2949,7 @@ function Inspector(props: {
     Array<{ value: string; label: React.ReactNode; searchLabel: string; disabled?: boolean }>
   >([])
   const [shotLinkedAssets, setShotLinkedAssets] = useState<
-    Array<{ type: string; id: string; name?: string; thumbnail?: string; image_id?: number | null }>
+    Array<{ type: string; id: string; name?: string; thumbnail?: string; image_id?: number | null; file_id?: string | null }>
   >([])
   const [shotAssetsOverview, setShotAssetsOverview] = useState<ShotAssetsOverviewRead | null>(null)
   const shotAssetsOverviewRequestSeqRef = useRef(0)
@@ -3017,6 +2977,10 @@ function Inspector(props: {
   const [linkCostumeOpen, setLinkCostumeOpen] = useState(false)
   const [linkCostumeLoading, setLinkCostumeLoading] = useState(false)
   const [linkCostumeSelectedIds, setLinkCostumeSelectedIds] = useState<string[]>([])
+  const [activeReferenceFrameType, setActiveReferenceFrameType] = useState<PromptFrameType>('key')
+  const [frameReferenceOverrides, setFrameReferenceOverrides] = useState<
+    Partial<Record<PromptFrameType, Array<{ type: string; id: string; name: string; file_id: string }>>>
+  >({})
   const [projectCostumeOptions, setProjectCostumeOptions] = useState<Array<{ value: string; label: React.ReactNode; searchLabel: string; disabled?: boolean }>>([])
   const [opsTitleDraft, setOpsTitleDraft] = useState('')
   const [opsNoteDraft, setOpsNoteDraft] = useState('')
@@ -3072,7 +3036,11 @@ function Inspector(props: {
           ratio,
         } as any,
       })
-      const data = (res as any)?.data ?? null
+      const envelope = res as any
+      if (typeof envelope?.code === 'number' && envelope.code >= 400) {
+        throw new Error(String(envelope.message || '视频提示词预览失败'))
+      }
+      const data = envelope?.data ?? null
       return {
         prompt: typeof data?.prompt === 'string' ? data.prompt : '',
         images: Array.isArray(data?.images) ? (data.images as string[]).filter(Boolean) : [],
@@ -3096,6 +3064,10 @@ function Inspector(props: {
           ratio,
         } as any,
       })
+      const envelope = created as any
+      if (typeof envelope?.code === 'number' && envelope.code >= 400) {
+        throw new Error(String(envelope.message || '视频生成任务创建失败'))
+      }
       return {
         taskId: created.data?.task_id ?? null,
       }
@@ -3448,20 +3420,6 @@ function Inspector(props: {
   const sceneIds = useMemo(() => Array.from(new Set(sceneLinks.map((x) => x.scene_id).filter(Boolean))), [sceneLinks])
   const characterIds = useMemo(() => Array.from(new Set(shotCharacterLinks.map((x) => x.character_id).filter(Boolean))), [shotCharacterLinks])
 
-  const linkedCharacterIds = useMemo(() => characterIds, [characterIds])
-  const linkedSceneId = useMemo(() => {
-    if (!selectedShot?.id) return null
-    return sceneLinks.find((l) => (l.shot_id ?? null) === selectedShot.id)?.scene_id ?? shotDetail?.scene_id ?? null
-  }, [sceneLinks, selectedShot?.id, shotDetail?.scene_id])
-  const linkedPropIds = useMemo(() => {
-    if (!selectedShot?.id) return []
-    return Array.from(new Set(propLinks.filter((l) => (l.shot_id ?? null) === selectedShot.id).map((l) => l.prop_id).filter(Boolean))) as string[]
-  }, [propLinks, selectedShot?.id])
-  const linkedCostumeIds = useMemo(() => {
-    if (!selectedShot?.id) return []
-    return Array.from(new Set(costumeLinks.filter((l) => (l.shot_id ?? null) === selectedShot.id).map((l) => l.costume_id).filter(Boolean))) as string[]
-  }, [costumeLinks, selectedShot?.id])
-
   useEffect(() => {
     if (!selectedShot?.id) {
       setShotLinkedAssets([])
@@ -3777,6 +3735,10 @@ function Inspector(props: {
     return map
   }, [extractFileIdFromThumbnail, shotLinkedAssets])
 
+  const isSystemFaceDetailRef = useCallback((fileId?: string | null) => {
+    return String(fileId ?? '').trim().endsWith('#face-detail')
+  }, [])
+
   const deriveKeyframePromptPreview = useCallback(
     async ({
       base,
@@ -3789,7 +3751,7 @@ function Inspector(props: {
         throw new Error('shot is required')
       }
       const basePrompt = (base.prompt || '').trim()
-      const refFileIds = (context.refFileIds || []).filter(Boolean)
+      const refFileIds = (context.refFileIds || []).filter(Boolean).filter((fid) => !isSystemFaceDetailRef(fid))
       if (!basePrompt) {
         return {
           basePrompt: '',
@@ -3861,7 +3823,7 @@ function Inspector(props: {
         mappings: Array.isArray(d?.mappings) ? (d.mappings as ShotFramePromptMappingRead[]) : [],
       }
     },
-    [extractFileIdFromThumbnail, selectedShot?.id, shotLinkedAssets],
+    [extractFileIdFromThumbnail, isSystemFaceDetailRef, selectedShot?.id, shotLinkedAssets],
   )
 
   const keyframePromptDraft = useGenerationDraft<
@@ -3873,29 +3835,17 @@ function Inspector(props: {
     initialBase: { frameType: 'key', prompt: '' },
     initialContext: { refFileIds: [] },
     derive: deriveKeyframePromptPreview,
-    submit: async ({ base, context, derived }) => {
+    submit: async ({ base, context }) => {
       if (!selectedShot?.id) {
         throw new Error('shot is required')
       }
-      const resolvedItems =
-        derived.mappings.length > 0
-          ? derived.mappings.map((mapping) => ({
-              type: mapping.type,
-              id: mapping.id,
-              name: mapping.name,
-              file_id: mapping.file_id,
-            }))
-          : (context.refFileIds || []).map((fid) => {
-              const match =
-                shotLinkedAssets.find((x) => extractFileIdFromThumbnail(x.thumbnail ?? null) === fid) ??
-                shotLinkedAssets.find((x) => (x as any)?.file_id === fid)
-              return {
-                type: (match?.type as any) ?? 'character',
-                id: match?.id ?? fid,
-                name: match?.name ?? match?.id ?? fid,
-                file_id: fid,
-              }
-            })
+      const currentFrameAssets = getFrameReferenceAssets(base.frameType)
+      const order = (context.refFileIds || []).filter((fid) => !isSystemFaceDetailRef(fid))
+      const resolvedItems = order.length > 0
+        ? order
+          .map((fid) => currentFrameAssets.find((item) => item.file_id === fid))
+          .filter(Boolean) as Array<{ type: string; id: string; name: string; file_id: string }>
+        : currentFrameAssets
 
       const ratio = resolveVideoRatioForRequest()
       if (!ratio) {
@@ -3937,7 +3887,9 @@ function Inspector(props: {
       if (!selectedShot?.id) return
       const frameType = opts?.frameType ?? keyframePromptPreviewFrameType
       const basePrompt = (typeof opts?.prompt === 'string' ? opts.prompt : keyframePromptPreviewDraft || '').trim()
-      const refFileIds = (opts?.refFileIds ?? keyframePromptPreviewRefFileIds ?? []).filter(Boolean)
+      const refFileIds = (opts?.refFileIds ?? keyframePromptPreviewRefFileIds ?? [])
+        .filter(Boolean)
+        .filter((fid) => !isSystemFaceDetailRef(fid))
       const nextBase = { frameType, prompt: basePrompt }
       const nextContext = { refFileIds }
       keyframePromptDraft.hydrate({
@@ -3957,7 +3909,7 @@ function Inspector(props: {
         if (derived?.images?.length) {
           keyframePromptDraft.hydrate({
             base: nextBase,
-            context: { refFileIds: derived.images },
+            context: nextContext,
             derived: {
               ...derived,
               images: derived.images,
@@ -3979,54 +3931,132 @@ function Inspector(props: {
       keyframePromptPreviewDraft,
       keyframePromptPreviewFrameType,
       keyframePromptPreviewRefFileIds,
+      isSystemFaceDetailRef,
       selectedShot?.id,
     ],
   )
 
-  const orderedLinkedCharacterIds = useMemo(() => {
-    return shotCharacterLinks
-      .slice()
-      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-      .map((x) => x.character_id)
-      .filter(Boolean)
-      .map((x) => String(x))
-  }, [shotCharacterLinks])
+  useEffect(() => {
+    // 镜头切换时清空本地覆盖，随后以各帧已经持久化的独立参考资产为准。
+    setFrameReferenceOverrides({})
+  }, [selectedShot?.id])
 
-  const autoKeyframeRefFileIds = useMemo(() => {
-    const out: string[] = []
-    const push = (fid: string | null) => {
-      if (!fid) return
-      if (out.includes(fid)) return
-      out.push(fid)
-    }
-    // 角色（按 index 顺序）
-    orderedLinkedCharacterIds.forEach((cid) =>
-      push(extractFileIdFromThumbnail(linkedAssetThumbByKey.get(`character:${cid}`) ?? null)),
-    )
-    // 场景（单个）
-    if (linkedSceneId) push(extractFileIdFromThumbnail(linkedAssetThumbByKey.get(`scene:${linkedSceneId}`) ?? null))
-    // 道具
-    linkedPropIds.forEach((pid) => push(extractFileIdFromThumbnail(linkedAssetThumbByKey.get(`prop:${pid}`) ?? null)))
-    // 服装
-    linkedCostumeIds.forEach((cid) =>
-      push(extractFileIdFromThumbnail(linkedAssetThumbByKey.get(`costume:${cid}`) ?? null)),
-    )
-    return out
-  }, [
-    extractFileIdFromThumbnail,
-    linkedCostumeIds,
-    linkedPropIds,
-    linkedSceneId,
-    linkedAssetThumbByKey,
-    orderedLinkedCharacterIds,
-  ])
+  const getFrameReferenceAssets = useCallback(
+    (frameType: PromptFrameType) => {
+      const normalizeItem = (item: any) => {
+        const type = String(item?.type ?? '')
+        const id = String(item?.id ?? '')
+        if (!type || !id) return null
+        const current = shotLinkedAssets.find((candidate) => candidate.type === type && candidate.id === id)
+        const currentFileId =
+          (typeof current?.file_id === 'string' && current.file_id.trim() ? current.file_id.trim() : null) ??
+          extractFileIdFromThumbnail(current?.thumbnail ?? null)
+        const fileId = currentFileId ?? String(item?.file_id ?? '').trim()
+        if (!fileId) return null
+        return {
+          type,
+          id,
+          name: String(current?.name ?? item?.name ?? id),
+          file_id: fileId,
+        }
+      }
+      const overridden = frameReferenceOverrides[frameType]
+      if (overridden) return overridden.map(normalizeItem).filter(Boolean) as Array<{ type: string; id: string; name: string; file_id: string }>
+      const slot = frameImages.find((item) => item.frame_type === frameType)
+      const persisted = (slot as any)?.reference_assets
+      if (Array.isArray(persisted)) {
+        return persisted
+          .map(normalizeItem)
+          .filter(Boolean) as Array<{ type: string; id: string; name: string; file_id: string }>
+      }
+      // 未配置就是空，不从镜头级关联自动继承，保证三种帧真正相互独立。
+      return []
+    },
+    [extractFileIdFromThumbnail, frameImages, frameReferenceOverrides, shotLinkedAssets],
+  )
+
+  const saveFrameReferenceType = useCallback(
+    async (frameType: PromptFrameType, assetType: string, selectedIds: string[]) => {
+      let slot = frameImages.find((item) => item.frame_type === frameType)
+      const retained = getFrameReferenceAssets(frameType).filter((item) => item.type !== assetType)
+      const selected = (
+        await Promise.all(
+          selectedIds.map(async (id) => {
+          let item = shotLinkedAssets.find((candidate) => candidate.type === assetType && candidate.id === id)
+          if (!item) {
+            try {
+              const response = await StudioEntitiesApi.get(assetType as any, id)
+              const entity = (response.data ?? null) as any
+              item = {
+                type: assetType,
+                id,
+                name: String(entity?.name ?? id),
+                thumbnail: typeof entity?.thumbnail === 'string' ? entity.thumbnail : '',
+                file_id: typeof entity?.file_id === 'string' ? entity.file_id : null,
+              }
+            } catch {
+              return null
+            }
+          }
+          const fileId =
+            (typeof item.file_id === 'string' && item.file_id.trim() ? item.file_id.trim() : null) ??
+            extractFileIdFromThumbnail(item.thumbnail ?? null)
+          return fileId
+            ? {
+                type: assetType,
+                id,
+                name: String(item.name ?? id),
+                file_id: fileId,
+              }
+            : null
+          }),
+        )
+      ).filter(Boolean) as Array<{ type: string; id: string; name: string; file_id: string }>
+      const next = [...retained, ...selected]
+      setFrameReferenceOverrides((prev) => ({ ...prev, [frameType]: next }))
+      if (!slot) {
+        if (!selectedShot?.id) return
+        const created = await StudioShotFrameImagesService.createShotFrameImageApiV1StudioShotFrameImagesPost({
+          requestBody: {
+            shot_detail_id: selectedShot.id,
+            frame_type: frameType,
+            file_id: null,
+            width: null,
+            height: null,
+            format: 'png',
+            reference_assets: next,
+          } as any,
+        })
+        slot = created.data ?? undefined
+        await onRefreshShotFrameImages?.()
+        return
+      }
+      await StudioShotFrameImagesService.updateShotFrameImageApiV1StudioShotFrameImagesImageIdPatch({
+        imageId: slot.id,
+        requestBody: { reference_assets: next } as any,
+      })
+    },
+    [
+      extractFileIdFromThumbnail,
+      frameImages,
+      getFrameReferenceAssets,
+      onRefreshShotFrameImages,
+      selectedShot?.id,
+      shotLinkedAssets,
+    ],
+  )
+
+  const frameReferenceFileIds = useCallback(
+    (frameType: PromptFrameType) => getFrameReferenceAssets(frameType).map((item) => item.file_id).filter(Boolean),
+    [getFrameReferenceAssets],
+  )
 
   const moveKeyframePromptRefFile = useCallback((fromIndex: number, toIndex: number) => {
-    const current = keyframePromptPreviewRefFileIds
+    const current = keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
     if (fromIndex < 0 || toIndex < 0 || fromIndex >= current.length || toIndex >= current.length) return
     const next = reorder(current, fromIndex, toIndex)
     keyframePromptDraft.setContext({ refFileIds: next })
-  }, [keyframePromptDraft, keyframePromptPreviewRefFileIds])
+  }, [isSystemFaceDetailRef, keyframePromptDraft, keyframePromptPreviewRefFileIds])
 
   const loadProjectRoleOptions = async () => {
     if (!projectId) {
@@ -4126,11 +4156,11 @@ function Inspector(props: {
         setProjectSceneOptions(details.map((d) => ({ value: d.id, searchLabel: d.name, label: makeLabel(d) })))
       } else if (kind === 'prop') {
         setProjectPropOptions(
-          details.map((d) => ({ value: d.id, searchLabel: d.name, label: makeLabel(d), disabled: linkedPropIds.includes(d.id) })),
+          details.map((d) => ({ value: d.id, searchLabel: d.name, label: makeLabel(d) })),
         )
       } else {
         setProjectCostumeOptions(
-          details.map((d) => ({ value: d.id, searchLabel: d.name, label: makeLabel(d), disabled: linkedCostumeIds.includes(d.id) })),
+          details.map((d) => ({ value: d.id, searchLabel: d.name, label: makeLabel(d) })),
         )
       }
     } finally {
@@ -4283,32 +4313,30 @@ function Inspector(props: {
 
   useEffect(() => {
     const allowed = new Set(refFrameTypeOptions.map((x) => x.value))
-    setRefImageType((prev) => (prev && allowed.has(prev) ? prev : undefined))
+    setRefImageType((prev) => {
+      if (prev && allowed.has(prev)) return prev
+      if (allowed.has('first')) return 'first'
+      if (allowed.has('last')) return 'last'
+      if (allowed.has('key')) return 'key'
+      return undefined
+    })
   }, [refFrameTypeOptions])
 
   const buildVideoRefSelection = () => {
-    const first = frameImages.find((x) => x.frame_type === 'first')?.file_id ?? null
-    const last = frameImages.find((x) => x.frame_type === 'last')?.file_id ?? null
-    const key = frameImages.find((x) => x.frame_type === 'key')?.file_id ?? null
-
-    const s = refImageType
-    if (s === 'first_last_key') {
-      return {
-        referenceMode: 'first_last_key' as const,
-        images: [first, last, key].filter((x): x is string => Boolean(x)),
-      }
-    }
-    if (s === 'first_last') {
-      return {
-        referenceMode: 'first_last' as const,
-        images: [first, last].filter((x): x is string => Boolean(x)),
-      }
-    }
-    if (s === 'key') return { referenceMode: 'key' as const, images: key ? [key] : [] }
-    if (s === 'first') return { referenceMode: 'first' as const, images: first ? [first] : [] }
-    if (s === 'last') return { referenceMode: 'last' as const, images: last ? [last] : [] }
-    return { referenceMode: 'text_only' as const, images: [] }
+    return buildVideoReferenceSelection(frameImages, refImageType)
   }
+
+  useEffect(() => {
+    const nextContext = buildVideoReferenceSelection(frameImages, refImageType)
+    videoPromptDraft.hydrate({
+      base: { prompt: videoPromptDraft.base.prompt },
+      context: nextContext,
+    })
+  }, [
+    refImageType,
+    frameImages.map((item) => `${item.frame_type}:${item.file_id ?? ''}`).join('|'),
+    selectedShot?.id,
+  ])
 
   const openVideoPromptPreview = async () => {
     if (!selectedShot?.id) {
@@ -4492,6 +4520,74 @@ function Inspector(props: {
     updateCardState(frameType, { thumbs })
   }
 
+  useEffect(() => {
+    if (!frameImageTask?.taskId || !isActiveTaskStatus(frameImageTask.status)) return
+    let cancelled = false
+    let timer: number | null = null
+
+    const poll = async () => {
+      try {
+        const statusRes = await FilmService.getTaskStatusApiV1FilmTasksTaskIdStatusGet({ taskId: frameImageTask.taskId })
+        if (cancelled) return
+        const data = statusRes.data
+        if (!data) {
+          timer = window.setTimeout(() => {
+            void poll()
+          }, 2000)
+          return
+        }
+
+        const nextTask = toRelationTaskStateFromStatusRead(data)
+        const frameType = (Object.keys(keyframeCards) as PromptFrameType[]).find(
+          (ft) => keyframeCards[ft].taskId === frameImageTask.taskId,
+        )
+        if (frameType) {
+          updateCardState(frameType, {
+            taskStatus: nextTask.status,
+            loading: isActiveTaskStatus(nextTask.status),
+          })
+        }
+
+        if (isActiveTaskStatus(nextTask.status)) {
+          setFrameImageTask(nextTask)
+          timer = window.setTimeout(() => {
+            void poll()
+          }, 2000)
+          return
+        }
+
+        setFrameImageTask(null)
+        setFrameImageSettledTask(nextTask)
+        if (frameType) {
+          updateCardState(frameType, {
+            taskStatus: nextTask.status,
+            loading: false,
+          })
+          if (nextTask.status === 'succeeded') {
+            await onRefreshShotFrameImages?.()
+            if (!cancelled) {
+              await loadCardThumbs(frameType, null, 3)
+            }
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          timer = window.setTimeout(() => {
+            void poll()
+          }, 2000)
+        }
+      }
+    }
+
+    timer = window.setTimeout(() => {
+      void poll()
+    }, 1000)
+    return () => {
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [frameImageTask?.taskId, frameImageTask?.status, keyframeCards, onRefreshShotFrameImages])
+
   const generateKeyframeCard = async (frameType: PromptFrameType) => {
     if (!selectedShot?.id) {
       message.warning('请先选择一个分镜')
@@ -4505,9 +4601,10 @@ function Inspector(props: {
       setKeyframeDirectiveCollapsed(true)
       setKeyframePromptDecisionCollapsed(true)
       const basePrompt = getPromptFromDetailByType(frameType)
+      const selectedFrameRefFileIds = frameReferenceFileIds(frameType)
       keyframePromptDraft.hydrate({
         base: { frameType, prompt: basePrompt },
-        context: { refFileIds: autoKeyframeRefFileIds },
+        context: { refFileIds: selectedFrameRefFileIds },
         state: basePrompt.trim() ? 'draft_changed' : 'idle',
       })
       setKeyframePromptDebugContext(null)
@@ -4517,7 +4614,7 @@ function Inspector(props: {
         void renderShotPromptToTextarea({
           frameType,
           prompt: basePrompt,
-          refFileIds: autoKeyframeRefFileIds,
+          refFileIds: selectedFrameRefFileIds,
           showPreviewLoading: true,
         })
       } else {
@@ -4632,7 +4729,10 @@ function Inspector(props: {
       await renderShotPromptToTextarea({
         frameType,
         prompt: generatedPrompt,
-        refFileIds: keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds,
+        refFileIds:
+          keyframePromptPreviewRefFileIds.length > 0
+            ? keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
+            : frameReferenceFileIds(frameType),
       })
       message.success('提示词已生成')
     } catch {
@@ -4643,20 +4743,14 @@ function Inspector(props: {
   }
 
   useEffect(() => {
-    // 弹窗打开时，若当前没有参考图，则自动填充为分镜关联实体的参考图
-    if (!keyframePromptPreviewOpen) return
-    if (keyframePromptPreviewRefFileIds.length > 0) return
-    if (autoKeyframeRefFileIds.length === 0) return
-    keyframePromptDraft.setContext({ refFileIds: autoKeyframeRefFileIds })
-  }, [autoKeyframeRefFileIds, keyframePromptPreviewOpen, keyframePromptPreviewRefFileIds.length])
-
-  useEffect(() => {
     if (!keyframePromptPreviewOpen) return
     if (mapGenerationDraftStateToRenderState(keyframePromptRenderState) !== 'stale') return
     const basePrompt = (keyframePromptPreviewDraft || '').trim()
     if (!basePrompt) return
     const refFileIds =
-      keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds
+      keyframePromptPreviewRefFileIds.length > 0
+        ? keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
+        : frameReferenceFileIds(keyframePromptPreviewFrameType)
     const timer = window.setTimeout(() => {
       void renderShotPromptToTextarea({
         frameType: keyframePromptPreviewFrameType,
@@ -4668,12 +4762,13 @@ function Inspector(props: {
       window.clearTimeout(timer)
     }
   }, [
-    autoKeyframeRefFileIds,
+    frameReferenceFileIds,
     keyframePromptPreviewDraft,
     keyframePromptPreviewFrameType,
     keyframePromptPreviewOpen,
     keyframePromptPreviewRefFileIds,
     keyframePromptRenderState,
+    isSystemFaceDetailRef,
     renderShotPromptToTextarea,
   ])
 
@@ -4692,9 +4787,13 @@ function Inspector(props: {
     setKeyframePromptActionLoading(true)
     updateCardState(frameType, { loading: true, taskStatus: 'pending', taskId: null })
     try {
-      const refFileIds = keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds
-      keyframePromptDraft.replaceContext({ refFileIds })
-      const submitted = await keyframePromptDraft.submitNow()
+      const refFileIds =
+        keyframePromptPreviewRefFileIds.length > 0
+          ? keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
+          : frameReferenceFileIds(frameType)
+      const submitContext = { refFileIds }
+      keyframePromptDraft.replaceContext(submitContext)
+      const submitted = await keyframePromptDraft.submitNow({ context: submitContext })
       const taskId = submitted?.taskId
       if (!taskId) {
         message.error('生成任务创建失败：缺少任务 ID')
@@ -4709,41 +4808,9 @@ function Inspector(props: {
         cancelRequested: false,
       })
       setFrameImageSettledTask(null)
-      // 任务已提交，立即关闭弹窗，任务中心会继续追踪进度
+      // 任务已提交，立即关闭弹窗并释放按钮 loading；任务中心继续追踪进度。
       setKeyframePromptPreviewOpen(false)
-
-      let finalTaskState: RelationTaskState | null = null
-      for (let i = 0; i < 30; i += 1) {
-        await sleep(2000)
-        const statusRes = await FilmService.getTaskStatusApiV1FilmTasksTaskIdStatusGet({ taskId })
-        const status = statusRes.data?.status
-        if (!status) continue
-        if (statusRes.data) {
-          finalTaskState = toRelationTaskStateFromStatusRead(statusRes.data)
-          setFrameImageTask(finalTaskState)
-        }
-        updateCardState(frameType, { taskStatus: status })
-        if (status === 'succeeded' || status === 'failed' || status === 'cancelled') break
-      }
-      if (
-        finalTaskState &&
-        (finalTaskState.status === 'succeeded' ||
-          finalTaskState.status === 'failed' ||
-          finalTaskState.status === 'cancelled')
-      ) {
-        setFrameImageTask(null)
-        setFrameImageSettledTask(finalTaskState)
-        if (finalTaskState.status === 'succeeded') {
-          await onRefreshShotFrameImages?.()
-          const latestSlotId = await getLatestFrameSlotId(frameType)
-          await loadCardThumbs(frameType, latestSlotId, 5)
-        }
-      } else {
-        // 超时退出轮询，清除本地任务状态，任务中心会继续追踪
-        setFrameImageTask(null)
-        setFrameImageSettledTask(null)
-        message.warning('生成任务仍在执行中，请关注右下角任务中心')
-      }
+      message.success('已提交生成任务，请在右下角任务中心查看进度')
     } catch {
       updateCardState(frameType, { taskStatus: 'failed' })
       message.error(`${frameLabel[frameType]}生成失败`)
@@ -5130,6 +5197,11 @@ function Inspector(props: {
                   {(['first', 'key', 'last'] as PromptFrameType[]).map((ft) => {
                     const st = keyframeCards[ft]
                     const slot = frameImages.find((x) => x.frame_type === ft)
+                    const frameRefs = getFrameReferenceAssets(ft)
+                    const frameCharacterIds = frameRefs.filter((item) => item.type === 'character').map((item) => item.id)
+                    const frameSceneId = frameRefs.find((item) => item.type === 'scene')?.id ?? null
+                    const framePropIds = frameRefs.filter((item) => item.type === 'prop').map((item) => item.id)
+                    const frameCostumeIds = frameRefs.filter((item) => item.type === 'costume').map((item) => item.id)
                     const inUseFileId = slot?.file_id ? String(slot.file_id) : ''
                     const statusText =
                       st.taskStatus === 'pending'
@@ -5183,7 +5255,8 @@ function Inspector(props: {
                                   className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-500 shrink-0 hover:border-gray-400 hover:text-gray-700"
                                   disabled={promptAssetsUpdating || linkRoleLoading}
                                   onClick={() => {
-                                    setLinkRoleSelectedIds([...linkedCharacterIds])
+                                    setActiveReferenceFrameType(ft)
+                                    setLinkRoleSelectedIds([...frameCharacterIds])
                                     setLinkRoleOpen(true)
                                     void loadProjectRoleOptions()
                                   }}
@@ -5191,10 +5264,10 @@ function Inspector(props: {
                                 >
                                   <PlusOutlined />
                                 </button>
-                                {linkedCharacterIds.length === 0 ? (
+                                {frameCharacterIds.length === 0 ? (
                                   <div className="text-xs text-gray-400">暂无关联角色</div>
                                 ) : (
-                                  linkedCharacterIds.map((cid) => {
+                                  frameCharacterIds.map((cid) => {
                                     const thumb = linkedAssetThumbByKey.get(`character:${cid}`)
                                     const name = characterNameMap[cid] ?? cid
                                     return thumb ? (
@@ -5226,6 +5299,7 @@ function Inspector(props: {
                                   className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-500 shrink-0 hover:border-gray-400 hover:text-gray-700"
                                   disabled={promptAssetsUpdating || linkSceneLoading}
                                   onClick={() => {
+                                    setActiveReferenceFrameType(ft)
                                     setLinkSceneOpen(true)
                                     void loadProjectAssetOptions('scene')
                                   }}
@@ -5233,18 +5307,18 @@ function Inspector(props: {
                                 >
                                   <PlusOutlined />
                                 </button>
-                                {linkedSceneId ? (
-                                  linkedAssetThumbByKey.get(`scene:${linkedSceneId}`) ? (
+                                {frameSceneId ? (
+                                  linkedAssetThumbByKey.get(`scene:${frameSceneId}`) ? (
                                     <Image
-                                      key={linkedSceneId}
+                                      key={frameSceneId}
                                       width={48}
                                       height={48}
                                       style={{ objectFit: 'cover', borderRadius: 8 }}
-                                      src={resolveAssetUrl(linkedAssetThumbByKey.get(`scene:${linkedSceneId}`) ?? '')}
-                                      preview={{ src: resolveAssetUrl(linkedAssetThumbByKey.get(`scene:${linkedSceneId}`) ?? '') }}
+                                      src={resolveAssetUrl(linkedAssetThumbByKey.get(`scene:${frameSceneId}`) ?? '')}
+                                      preview={{ src: resolveAssetUrl(linkedAssetThumbByKey.get(`scene:${frameSceneId}`) ?? '') }}
                                     />
                                   ) : (
-                                    <div className="text-xs text-gray-400">已关联场景：{sceneNameMap[linkedSceneId] ?? linkedSceneId}</div>
+                                    <div className="text-xs text-gray-400">已关联场景：{sceneNameMap[frameSceneId] ?? frameSceneId}</div>
                                   )
                                 ) : (
                                   <div className="text-xs text-gray-400">暂无关联场景</div>
@@ -5258,7 +5332,8 @@ function Inspector(props: {
                                   className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-500 shrink-0 hover:border-gray-400 hover:text-gray-700"
                                   disabled={promptAssetsUpdating || linkPropLoading}
                                   onClick={() => {
-                                    setLinkPropSelectedIds([])
+                                    setActiveReferenceFrameType(ft)
+                                    setLinkPropSelectedIds([...framePropIds])
                                     setLinkPropOpen(true)
                                     void loadProjectAssetOptions('prop')
                                   }}
@@ -5266,10 +5341,10 @@ function Inspector(props: {
                                 >
                                   <PlusOutlined />
                                 </button>
-                                {linkedPropIds.length === 0 ? (
+                                {framePropIds.length === 0 ? (
                                   <div className="text-xs text-gray-400">暂无关联道具</div>
                                 ) : (
-                                  linkedPropIds.map((pid) =>
+                                  framePropIds.map((pid) =>
                                     linkedAssetThumbByKey.get(`prop:${pid}`) ? (
                                       <Image
                                         key={pid}
@@ -5295,7 +5370,8 @@ function Inspector(props: {
                                   className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-500 shrink-0 hover:border-gray-400 hover:text-gray-700"
                                   disabled={promptAssetsUpdating || linkCostumeLoading}
                                   onClick={() => {
-                                    setLinkCostumeSelectedIds([])
+                                    setActiveReferenceFrameType(ft)
+                                    setLinkCostumeSelectedIds([...frameCostumeIds])
                                     setLinkCostumeOpen(true)
                                     void loadProjectAssetOptions('costume')
                                   }}
@@ -5303,10 +5379,10 @@ function Inspector(props: {
                                 >
                                   <PlusOutlined />
                                 </button>
-                                {linkedCostumeIds.length === 0 ? (
+                                {frameCostumeIds.length === 0 ? (
                                   <div className="text-xs text-gray-400">暂无关联服装</div>
                                 ) : (
-                                  linkedCostumeIds.map((cid) =>
+                                  frameCostumeIds.map((cid) =>
                                     linkedAssetThumbByKey.get(`costume:${cid}`) ? (
                                       <Image
                                         key={cid}
@@ -5365,13 +5441,13 @@ function Inspector(props: {
 
                           <Modal
                             title="编辑关联角色"
-                            open={linkRoleOpen}
+                            open={linkRoleOpen && activeReferenceFrameType === ft}
                             onCancel={() => setLinkRoleOpen(false)}
                             destroyOnClose
                             width={560}
                             onOk={() => {
                               void (async () => {
-                                await onUpdatePromptActors(linkRoleSelectedIds)
+                                await saveFrameReferenceType(activeReferenceFrameType, 'character', linkRoleSelectedIds)
                                 setLinkRoleOpen(false)
                               })()
                             }}
@@ -5403,7 +5479,7 @@ function Inspector(props: {
 
                           <Modal
                             title="关联场景"
-                            open={linkSceneOpen}
+                            open={linkSceneOpen && activeReferenceFrameType === ft}
                             onCancel={() => setLinkSceneOpen(false)}
                             footer={null}
                             destroyOnClose
@@ -5414,7 +5490,10 @@ function Inspector(props: {
                               <Select
                                 className="w-full"
                                 placeholder="选择要关联到当前分镜的场景"
-                                value={linkedSceneId ?? undefined}
+                                value={
+                                  getFrameReferenceAssets(activeReferenceFrameType).find((item) => item.type === 'scene')?.id ??
+                                  undefined
+                                }
                                 loading={linkSceneLoading}
                                 disabled={promptAssetsUpdating}
                                 options={projectSceneOptions}
@@ -5425,7 +5504,7 @@ function Inspector(props: {
                                 }
                                 onChange={(v: string) => {
                                   void (async () => {
-                                    await onUpdatePromptScene(v)
+                                    await saveFrameReferenceType(activeReferenceFrameType, 'scene', v ? [v] : [])
                                     setLinkSceneOpen(false)
                                   })()
                                 }}
@@ -5435,14 +5514,14 @@ function Inspector(props: {
 
                           <Modal
                             title="关联道具"
-                            open={linkPropOpen}
+                            open={linkPropOpen && activeReferenceFrameType === ft}
                             onCancel={() => setLinkPropOpen(false)}
                             footer={null}
                             destroyOnClose
                             width={560}
                           >
                             <div className="space-y-2">
-                              <div className="text-xs text-gray-500">来源：当前项目道具（选择后立即保存；已关联的不可重复选择）</div>
+                              <div className="text-xs text-gray-500">只影响当前帧；其他帧的道具选择保持不变</div>
                               <Select
                                 mode="multiple"
                                 className="w-full"
@@ -5457,13 +5536,11 @@ function Inspector(props: {
                                   String(option?.searchLabel ?? '').toLowerCase().includes(input.toLowerCase())
                                 }
                                 onChange={(vals: Array<string | number>) => {
-                                  const nextNew = (vals ?? []).map((v) => String(v)).filter(Boolean)
-                                  setLinkPropSelectedIds(nextNew)
-                                  const merged = Array.from(new Set([...linkedPropIds, ...nextNew]))
+                                  const next = (vals ?? []).map((v) => String(v)).filter(Boolean)
+                                  setLinkPropSelectedIds(next)
                                   void (async () => {
-                                    await onUpdatePromptProps(merged)
+                                    await saveFrameReferenceType(activeReferenceFrameType, 'prop', next)
                                     setLinkPropOpen(false)
-                                    setLinkPropSelectedIds([])
                                   })()
                                 }}
                               />
@@ -5472,14 +5549,14 @@ function Inspector(props: {
 
                           <Modal
                             title="关联服装"
-                            open={linkCostumeOpen}
+                            open={linkCostumeOpen && activeReferenceFrameType === ft}
                             onCancel={() => setLinkCostumeOpen(false)}
                             footer={null}
                             destroyOnClose
                             width={560}
                           >
                             <div className="space-y-2">
-                              <div className="text-xs text-gray-500">来源：当前项目服装（选择后立即保存；已关联的不可重复选择）</div>
+                              <div className="text-xs text-gray-500">只影响当前帧；其他帧的服装选择保持不变</div>
                               <Select
                                 mode="multiple"
                                 className="w-full"
@@ -5494,13 +5571,11 @@ function Inspector(props: {
                                   String(option?.searchLabel ?? '').toLowerCase().includes(input.toLowerCase())
                                 }
                                 onChange={(vals: Array<string | number>) => {
-                                  const nextNew = (vals ?? []).map((v) => String(v)).filter(Boolean)
-                                  setLinkCostumeSelectedIds(nextNew)
-                                  const merged = Array.from(new Set([...linkedCostumeIds, ...nextNew]))
+                                  const next = (vals ?? []).map((v) => String(v)).filter(Boolean)
+                                  setLinkCostumeSelectedIds(next)
                                   void (async () => {
-                                    await onUpdatePromptCostumes(merged)
+                                    await saveFrameReferenceType(activeReferenceFrameType, 'costume', next)
                                     setLinkCostumeOpen(false)
-                                    setLinkCostumeSelectedIds([])
                                   })()
                                 }}
                               />
@@ -6255,8 +6330,8 @@ function Inspector(props: {
                             prompt: keyframePromptPreviewDraft,
                             refFileIds:
                               keyframePromptPreviewRefFileIds.length > 0
-                                ? keyframePromptPreviewRefFileIds
-                                : autoKeyframeRefFileIds,
+                                ? keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
+                                : frameReferenceFileIds(keyframePromptPreviewFrameType),
                           })
                         }
                         disabled={!hasBasePrompt}

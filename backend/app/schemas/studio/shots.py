@@ -268,6 +268,10 @@ class ShotFrameImageBase(BaseModel):
     width: int | None = Field(None, description="宽(px)")
     height: int | None = Field(None, description="高(px)")
     format: str = Field("png", description="格式")
+    reference_assets: list["ShotLinkedAssetItem"] | None = Field(
+        None,
+        description="该帧独立选择的角色、场景、道具与服装参考资产",
+    )
 
 
 class ShotFrameImageCreate(BaseModel):
@@ -277,6 +281,7 @@ class ShotFrameImageCreate(BaseModel):
     width: int | None = None
     height: int | None = None
     format: str = "png"
+    reference_assets: list["ShotLinkedAssetItem"] = Field(default_factory=list)
 
 
 class ShotFrameImageUpdate(BaseModel):
@@ -285,6 +290,7 @@ class ShotFrameImageUpdate(BaseModel):
     width: int | None = None
     height: int | None = None
     format: str | None = None
+    reference_assets: list["ShotLinkedAssetItem"] | None = None
 
 
 class ShotFrameImageRead(ShotFrameImageBase):

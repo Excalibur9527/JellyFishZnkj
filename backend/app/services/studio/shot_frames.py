@@ -73,6 +73,45 @@ async def update(
     return await flush_and_refresh(db, obj)
 
 
+def set_reference_assets(
+    frame: ShotFrameImage,
+    *,
+    reference_assets: list[dict],
+) -> None:
+    """更新单个帧位的独立参考资产快照，避免三种帧共享选择状态。"""
+
+    frame.reference_assets = reference_assets
+
+
+def frame_reference_assets_match(
+    frame: ShotFrameImage,
+    *,
+    requested_assets: list[dict],
+) -> bool:
+    """校验生成请求使用的素材集合是否属于当前帧，阻止跨帧或镜头级素材混入。
+
+    图片顺序允许在提示词预览中调整；同一个角色、服装、场景或道具换了最新
+    图片时，file_id 可以随实体当前图片刷新，因此这里只校验资产类型与业务
+    ID 集合一致。`None` 表示旧帧尚未配置，可由首次生成初始化。
+    """
+
+    if frame.reference_assets is None:
+        return True
+
+    def signature(items: list[dict]) -> list[tuple[str, str]]:
+        """把资产快照转换为可稳定比较的类型、实体二元组。"""
+
+        return sorted(
+            (
+                str(item.get("type") or "").strip(),
+                str(item.get("id") or "").strip(),
+            )
+            for item in items
+        )
+
+    return signature(list(frame.reference_assets or [])) == signature(requested_assets)
+
+
 async def delete(
     db: AsyncSession,
     *,

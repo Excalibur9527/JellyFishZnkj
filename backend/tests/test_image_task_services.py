@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import struct
 from types import SimpleNamespace
+import zlib
 
 import pytest
 from fastapi import HTTPException
@@ -26,6 +29,7 @@ from app.services.studio.image_task_references import (
     pick_ordered_ref_file_ids,
     resolve_reference_file_ids_and_names_from_linked_items,
     resolve_reference_image_refs_by_file_ids,
+    resolve_shot_frame_reference_image_refs,
 )
 from app.services.studio.image_task_validation import (
     validate_actor_image,
@@ -92,6 +96,87 @@ class _FakeDB:
         if not self.execute_results:
             return _FakeExecuteResult()
         return self.execute_results.pop(0)
+
+
+def _make_solid_png(color: tuple[int, int, int]) -> bytes:
+    """生成单色 PNG 测试图，便于断言未被类型化处理改动。"""
+
+    return _encode_rgb_png(width=12, height=12, pixel_at=lambda _x, _y: color)
+
+
+def _make_costume_like_png() -> bytes:
+    """生成带上方“脸”和下方“服装”的 PNG，用于验证服装去身份处理。"""
+
+    def _pixel_at(x: int, y: int) -> tuple[int, int, int]:
+        if 28 <= x <= 72 and y <= 31:
+            return 210, 160, 120
+        if y >= 55:
+            return 20, 140, 90
+        return 240, 232, 220
+
+    return _encode_rgb_png(width=100, height=100, pixel_at=_pixel_at)
+
+
+def _decode_png_data_url(data_url: str) -> list[list[tuple[int, int, int]]]:
+    """解码测试中的 PNG data URL，方便检查像素变化。"""
+
+    _, encoded = data_url.split(",", 1)
+    return _decode_rgb_png(base64.b64decode(encoded))
+
+
+def _encode_rgb_png(*, width: int, height: int, pixel_at) -> bytes:
+    """用标准库生成测试 PNG，避免测试依赖外部图片库。"""
+
+    raw_rows: list[bytes] = []
+    for y in range(height):
+        row = bytearray()
+        for x in range(width):
+            row.extend(pixel_at(x, y))
+        raw_rows.append(bytes([0]) + bytes(row))
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", zlib.compress(b"".join(raw_rows)))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def _decode_rgb_png(content: bytes) -> list[list[tuple[int, int, int]]]:
+    """解码测试生成的无过滤 RGB PNG。"""
+
+    offset = 8
+    width = height = 0
+    idat_parts: list[bytes] = []
+    while offset + 8 <= len(content):
+        length = struct.unpack(">I", content[offset : offset + 4])[0]
+        chunk_type = content[offset + 4 : offset + 8]
+        chunk_data = content[offset + 8 : offset + 8 + length]
+        offset += 12 + length
+        if chunk_type == b"IHDR":
+            width, height, bit_depth, color_type, *_rest = struct.unpack(">IIBBBBB", chunk_data)
+            assert bit_depth == 8
+            assert color_type == 2
+        elif chunk_type == b"IDAT":
+            idat_parts.append(chunk_data)
+    raw = zlib.decompress(b"".join(idat_parts))
+    rows: list[list[tuple[int, int, int]]] = []
+    stride = width * 3
+    position = 0
+    for _ in range(height):
+        assert raw[position] == 0
+        position += 1
+        row = raw[position : position + stride]
+        position += stride
+        rows.append([tuple(row[x * 3 : x * 3 + 3]) for x in range(width)])  # type: ignore[list-item]
+    return rows
+
+
+def _png_chunk(chunk_type: bytes, chunk_data: bytes) -> bytes:
+    """生成测试 PNG chunk。"""
+
+    crc = zlib.crc32(chunk_type + chunk_data) & 0xFFFFFFFF
+    return struct.pack(">I", len(chunk_data)) + chunk_type + chunk_data + struct.pack(">I", crc)
 
 
 @pytest.mark.asyncio
@@ -172,6 +257,43 @@ async def test_resolve_reference_image_refs_by_file_ids_returns_data_urls(monkey
 
     assert len(refs) == 1
     assert refs[0]["image_url"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+async def test_resolve_shot_frame_reference_image_refs_isolates_costume_identity(monkeypatch):
+    character_file = FileItem(id="char-file", name="character.png", storage_key="images/character.png")
+    costume_file = FileItem(id="costume-file", name="costume.png", storage_key="images/costume.png")
+    db = _FakeDB(mapping={(FileItem, "char-file"): character_file, (FileItem, "costume-file"): costume_file})
+    character_bytes = _make_solid_png((12, 34, 56))
+    costume_bytes = _make_costume_like_png()
+
+    async def _fake_download_file(*, key: str):
+        if key == "images/character.png":
+            return character_bytes
+        if key == "images/costume.png":
+            return costume_bytes
+        raise AssertionError(f"unexpected key: {key}")
+
+    async def _fake_get_file_info(*, key: str):
+        assert key in {"images/character.png", "images/costume.png"}
+        return SimpleNamespace(content_type="image/png")
+
+    monkeypatch.setattr("app.services.studio.image_task_references.storage.download_file", _fake_download_file)
+    monkeypatch.setattr("app.services.studio.image_task_references.storage.get_file_info", _fake_get_file_info)
+
+    refs = await resolve_shot_frame_reference_image_refs(
+        db,
+        items=[
+            ShotLinkedAssetItem(id="char-1", type="character", name="艾铃", file_id="char-file"),
+            ShotLinkedAssetItem(id="costume-1", type="costume", name="大婚衣服", file_id="costume-file"),
+        ],
+    )
+
+    assert len(refs) == 2
+    assert refs[0]["image_url"] == "data:image/png;base64," + base64.b64encode(character_bytes).decode("ascii")
+    isolated_costume = _decode_png_data_url(refs[1]["image_url"])
+    assert isolated_costume[8][50] == isolated_costume[4][4]
+    assert isolated_costume[78][50] == (20, 140, 90)
 
 
 @pytest.mark.asyncio
@@ -285,7 +407,7 @@ async def test_build_character_image_base_draft_combines_actor_and_costume_refs(
     assert draft.image_id == 1
 
 
-def test_derive_frame_preview_replaces_reference_names_with_stable_order() -> None:
+def test_derive_frame_preview_keeps_story_names_and_uses_stable_reference_order() -> None:
     base = build_frame_base_draft(
         shot_id="shot-1",
         frame_type=ShotFrameType.first,
@@ -329,11 +451,19 @@ def test_derive_frame_preview_replaces_reference_names_with_stable_order() -> No
     assert "构图锚点：以门口灯光和主角站位作为画面重心，保持环境与人物同时可读" not in preview.rendered_prompt
     assert "朝向与视线：保持张三与李四的左右站位和对视方向稳定，避免无故翻转朝向" not in preview.rendered_prompt
     assert "人物面部约束：如画面中有人物，必须保留清晰可辨的原创虚构人脸和完整自然五官" in preview.rendered_prompt
+    assert "人物身份锁定：图1（张三）、图2（李四）共同定义各自对应角色的人物身份与脸部特征" in preview.rendered_prompt
+    assert "不是生成相似演员或重新设计角色" in preview.rendered_prompt
+    assert "身份判断必须以输入参考图的可见图像为准" in preview.rendered_prompt
+    assert "不作为重新想象人物外貌的描述词" in preview.rendered_prompt
+    assert "脸部结构、五官比例和年龄感必须与角色参考图连续一致" in preview.rendered_prompt
     assert "不要生成无脸、遮脸、背影替代、面部模糊或五官缺失" in preview.rendered_prompt
     assert "高质量影视概念参考图" in preview.rendered_prompt
     assert "避免真实摄影照片、街拍、证件照或真人抓拍质感" in preview.rendered_prompt
     assert "不要模仿任何真实个人、明星、公众人物或版权角色" in preview.rendered_prompt
-    assert "图1在雨夜中逼近图2" in preview.rendered_prompt
+    assert "张三在雨夜中逼近李四" in preview.rendered_prompt
+    assert "图1在雨夜中逼近图2" not in preview.rendered_prompt
+    assert "图1: 张三" in preview.rendered_prompt
+    assert "图2: 李四" in preview.rendered_prompt
 
 
 def test_derive_frame_preview_does_not_add_face_prompt_for_scene_only_frame() -> None:
@@ -357,6 +487,52 @@ def test_derive_frame_preview_does_not_add_face_prompt_for_scene_only_frame() ->
 
     assert "空旷大厅的清晨光线" in preview.rendered_prompt
     assert "人物面部约束" not in preview.rendered_prompt
+
+
+def test_derive_frame_preview_adds_typed_reference_usage_contract() -> None:
+    base = build_frame_base_draft(
+        shot_id="shot-contract",
+        frame_type=ShotFrameType.first,
+        prompt="艾铃站在婚房里，手持团扇",
+        director_command_summary="必须：保持人物身份稳定",
+        continuity_guidance="",
+        frame_specific_guidance="首帧建立婚房空间与人物站位",
+        composition_anchor="",
+        screen_direction_guidance="",
+    )
+    context = build_frame_context(
+        shot_id="shot-contract",
+        frame_type=ShotFrameType.first,
+        items=[
+            ShotLinkedAssetItem(id="char-1", type="character", name="艾铃", file_id="char-file"),
+            ShotLinkedAssetItem(id="costume-1", type="costume", name="大婚衣服", file_id="costume-file"),
+            ShotLinkedAssetItem(id="scene-1", type="scene", name="婚房", file_id="scene-file"),
+            ShotLinkedAssetItem(id="prop-1", type="prop", name="团扇", file_id="prop-file"),
+        ],
+    )
+
+    preview = derive_frame_preview(base=base, context=context)
+
+    assert "## 参考图使用规则" in preview.rendered_prompt
+    assert "第1张输入参考图（图1，艾铃）是角色身份参考" in preview.rendered_prompt
+    assert "必须保持脸型轮廓、五官比例、眼型、鼻型、嘴型、下巴轮廓、发际线和神态气质" in preview.rendered_prompt
+    assert "第2张输入参考图（图2，大婚衣服）是服装参考" in preview.rendered_prompt
+    assert "必须逐项保持参考服装的主色、辅色、纹样、材质和层次" in preview.rendered_prompt
+    assert "即使剧情出现婚礼、嫁娶、大婚或退婚等语义，也不得把服装默认改成红色婚服" in preview.rendered_prompt
+    assert "若该服装图的头脸区域被遮挡或涂抹，这是系统为避免换脸做的身份隔离处理" in preview.rendered_prompt
+    assert "必须忽略该图中的人脸、发型、身体姿势、手持物、背景与场景" in preview.rendered_prompt
+    assert "第3张输入参考图（图3，婚房）是场景参考" in preview.rendered_prompt
+    assert "必须忽略该图中的人物、脸、服装、动作和临时道具" in preview.rendered_prompt
+    assert "第4张输入参考图（图4，团扇）是道具参考" in preview.rendered_prompt
+    assert "必须忽略该图中的人物、手、脸、服装、背景和摆拍环境" in preview.rendered_prompt
+    assert "不同类型参考图不得互相覆盖职责" in preview.rendered_prompt
+    assert "非角色参考图中若出现人脸或人物，必须视为无关信息" in preview.rendered_prompt
+    assert "不得改变角色参考图确定的人脸与身份" in preview.rendered_prompt
+    assert "服装参考图的颜色、款式、纹样和层次优先于剧情词、时代词与类型片常识" in preview.rendered_prompt
+    assert "不得因为“大婚”“婚房”“嫁娶”等文字把服装自动改红或替换为其他婚服" in preview.rendered_prompt
+    assert "人物身份锁定：图1（艾铃）共同定义各自对应角色的人物身份与脸部特征" in preview.rendered_prompt
+    assert preview.rendered_prompt.index("人物身份锁定：图1（艾铃）") < preview.rendered_prompt.index("第1张输入参考图（图1，艾铃）")
+    assert preview.rendered_prompt.index("人物身份锁定：图1（艾铃）") < preview.rendered_prompt.index("## 生成内容")
 
 
 def test_derive_frame_preview_prioritizes_composition_for_first_frame() -> None:

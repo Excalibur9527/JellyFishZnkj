@@ -136,7 +136,9 @@ shot_extracted_dialogue_candidates
 ### 路径 A：正常提取确认
 
 ```text
-extract
+分镜列表页执行“一键提取”
+→ script_divide 创建并写入 Shot / ShotDetail
+→ 同一任务继续执行镜头级信息提取
 → shot_extracted_candidates 写入资产 pending
 → shot_extracted_dialogue_candidates 写入对白 pending
 → 用户处理资产候选：linked / ignored
@@ -144,6 +146,11 @@ extract
 → 全部资产候选和对白候选已 resolved
 → shot.status = ready
 ```
+
+页面主流程会在 `divide-async` 中显式传入 `extract_after_divide = true`。
+调试或仅分镜调用可以关闭该参数，只生成镜头而不继续提取。提取结果为空时仍会
+写入 `last_extracted_at`，随后状态计算可将“已提取且无候选”的镜头推进为 `ready`；
+不能用“候选数量为 0”代替“确实执行过提取”。
 
 ### 路径 B：明确无需提取
 

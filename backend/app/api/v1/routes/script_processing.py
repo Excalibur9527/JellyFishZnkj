@@ -94,6 +94,10 @@ class ScriptDividerRequest(BaseModel):
     """剧本分镜请求。"""
     script_text: str = Field(..., description="完整剧本文本", min_length=1)
     write_to_db: bool = Field(False, description="是否将分镜写入数据库（AI Studio shots 表）")
+    extract_after_divide: bool = Field(
+        False,
+        description="分镜写库后是否继续提取每个镜头的资产、对白与镜头语义",
+    )
     chapter_id: str | None = Field(
         None,
         description="章节 ID（write_to_db=true 时必填）",
@@ -119,6 +123,7 @@ async def divide_script_async(
         chapter_id=request.chapter_id,
         script_text=request.script_text,
         write_to_db=request.write_to_db,
+        extract_after_divide=request.extract_after_divide,
     )
     await db.commit()
     if not task_info.reused:

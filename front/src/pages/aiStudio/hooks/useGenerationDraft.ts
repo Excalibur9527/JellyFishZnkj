@@ -39,7 +39,7 @@ export type UseGenerationDraftResult<TBase, TContext, TDerived, TSubmitResult> =
     state?: GenerationDraftState
   }) => void
   deriveNow: (overrides?: { base?: TBase; context?: TContext }) => Promise<TDerived | null>
-  submitNow: () => Promise<TSubmitResult | null>
+  submitNow: (overrides?: { base?: TBase; context?: TContext }) => Promise<TSubmitResult | null>
   resetDerived: () => void
 }
 
@@ -127,21 +127,24 @@ export function useGenerationDraft<TBase, TContext, TDerived, TSubmitResult = vo
     }
   }, [base, context, derive])
 
-  const submitNow = useCallback(async () => {
+  const submitNow = useCallback(async (overrides?: { base?: TBase; context?: TContext }) => {
     if (!submit) return null
+    const nextBase = overrides?.base ?? base
+    const nextContext = overrides?.context ?? context
     let nextDerived = derived
     const needsDerive =
+      Boolean(overrides?.base || overrides?.context) ||
       !nextDerived ||
       (state !== 'derived' && state !== 'submitted')
     if (needsDerive) {
-      nextDerived = await deriveNow()
+      nextDerived = await deriveNow({ base: nextBase, context: nextContext })
       if (!nextDerived) return null
     }
     const stableDerived = nextDerived as TDerived
     setState('submitting')
     setError(null)
     try {
-      const result = await submit({ base, context, derived: stableDerived })
+      const result = await submit({ base: nextBase, context: nextContext, derived: stableDerived })
       setState('submitted')
       return result
     } catch (err) {

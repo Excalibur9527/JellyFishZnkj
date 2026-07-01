@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ShotFrameType } from './ShotFrameType';
+import type { ShotLinkedAssetItem } from './ShotLinkedAssetItem';
 export type ShotFrameImageRead = {
     /**
      * 图片行 ID
@@ -32,5 +33,9 @@ export type ShotFrameImageRead = {
      * 格式
      */
     format?: string;
+    /**
+     * 该帧独立选择的角色、场景、道具与服装参考资产
+     */
+    reference_assets?: (Array<ShotLinkedAssetItem> | null);
 };
 

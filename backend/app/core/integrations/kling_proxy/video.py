@@ -114,7 +114,10 @@ async def _build_body(input_: VideoGenerationInput) -> dict[str, Any]:
 
     for ref_b64 in (input_.character_references or []):
         b64 = _compress_to_b64(ref_b64)
-        image_list.append({"image_url": b64, "type": "reference"})
+        # Omni 接口把未声明首/尾帧类型的图片视为普通特征参考。
+        # 中转服务会拒绝旧版自定义值 `type=reference`，因此普通角色参考
+        # 只传 image_url，由供应商按 reference image 处理。
+        image_list.append({"image_url": b64})
 
     if image_list:
         body["image_list"] = image_list

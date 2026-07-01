@@ -295,6 +295,7 @@ export function ChapterShotsPage() {
               script_text: scriptText,
               write_to_db: true,
               chapter_id: chapterId,
+              extract_after_divide: true,
             },
           }),
         trackTaskData,

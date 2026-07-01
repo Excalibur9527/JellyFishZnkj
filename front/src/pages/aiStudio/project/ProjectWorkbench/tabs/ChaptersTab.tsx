@@ -264,6 +264,7 @@ export function ChaptersTab() {
               chapter_id: record.id,
               script_text: scriptText,
               write_to_db: true,
+              extract_after_divide: true,
             },
           }),
         trackTaskData: (data) => {

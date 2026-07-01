@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.integrations.openai.video import OpenAIVideoApiAdapter
+from app.core.integrations.kling_proxy.video import _build_body as build_kling_proxy_body
 from app.core.integrations.volcengine.video import VolcengineVideoApiAdapter
 from app.core.contracts.provider import ProviderConfig
 from app.core.contracts.video_generation import VideoGenerationInput
@@ -22,6 +23,26 @@ def _patch_httpx_client(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTr
         return real_client(transport=transport, timeout=timeout)  # type: ignore[arg-type]
 
     monkeypatch.setattr(httpx, "AsyncClient", factory)
+
+
+@pytest.mark.asyncio
+async def test_kling_proxy_character_reference_omits_invalid_type() -> None:
+    """普通角色参考图不应再发送中转接口拒绝的 type=reference。"""
+
+    inp = VideoGenerationInput.model_validate(
+        {
+            "prompt": "人物轻轻转头",
+            "ratio": "16:9",
+            "model": "kling-v3-omni",
+            "first_frame_base64": "aGVsbG8=",
+            "character_references": ["d29ybGQ="],
+        }
+    )
+
+    body = await build_kling_proxy_body(inp)
+
+    assert body["image_list"][0]["type"] == "first_frame"
+    assert body["image_list"][1] == {"image_url": "d29ybGQ="}
 
 
 @pytest.mark.asyncio

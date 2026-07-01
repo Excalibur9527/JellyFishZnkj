@@ -263,7 +263,7 @@ def test_create_shot_frame_image_task_renders_prompt_before_submit(client: TestC
         assert kwargs["render_context"]["dropped_guidance_details"][1]["reason_tag"] == "首帧降轴线"
         return "task-1"
 
-    monkeypatch.setattr(route, "_resolve_reference_image_refs_by_file_ids_service", _fake_resolve_image_refs)
+    monkeypatch.setattr(route, "_resolve_shot_frame_reference_image_refs_service", _fake_resolve_image_refs)
     monkeypatch.setattr(route, "_load_frame_render_guidance", _fake_load_frame_render_guidance)
     monkeypatch.setattr(route, "_create_image_task_and_link_service", _fake_create_image_task_and_link)
     app.dependency_overrides[get_db] = _override_db(db)
@@ -319,7 +319,7 @@ def test_create_shot_frame_image_task_rejects_unresolved_linked_reference(client
     async def _fake_create_image_task_and_link(*_args, **_kwargs):
         raise AssertionError("task should not be created when a linked reference cannot be resolved")
 
-    monkeypatch.setattr(route, "_resolve_reference_image_refs_by_file_ids_service", _fake_resolve_image_refs)
+    monkeypatch.setattr(route, "_resolve_shot_frame_reference_image_refs_service", _fake_resolve_image_refs)
     monkeypatch.setattr(route, "_load_frame_render_guidance", _fake_load_frame_render_guidance)
     monkeypatch.setattr(route, "_create_image_task_and_link_service", _fake_create_image_task_and_link)
     app.dependency_overrides[get_db] = _override_db(db)

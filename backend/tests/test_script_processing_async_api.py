@@ -36,10 +36,18 @@ def _override_db():
 def test_divide_async_returns_created_task_payload(client, monkeypatch) -> None:
     called: dict[str, str] = {}
 
-    async def _fake_create_divide_task(_db, *, chapter_id: str, script_text: str, write_to_db: bool):
+    async def _fake_create_divide_task(
+        _db,
+        *,
+        chapter_id: str,
+        script_text: str,
+        write_to_db: bool,
+        extract_after_divide: bool,
+    ):
         assert chapter_id == "chapter-1"
         assert script_text == "一段剧本"
         assert write_to_db is True
+        assert extract_after_divide is True
         return AsyncTaskCreateResult(
             task_id="task-1",
             status=TaskStatus.pending,
@@ -61,6 +69,7 @@ def test_divide_async_returns_created_task_payload(client, monkeypatch) -> None:
                 "chapter_id": "chapter-1",
                 "script_text": "一段剧本",
                 "write_to_db": True,
+                "extract_after_divide": True,
             },
         )
     finally:
