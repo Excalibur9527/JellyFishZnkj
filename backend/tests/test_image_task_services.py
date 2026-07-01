@@ -285,7 +285,7 @@ async def test_build_character_image_base_draft_combines_actor_and_costume_refs(
     assert draft.image_id == 1
 
 
-def test_derive_frame_preview_replaces_reference_names_with_stable_order() -> None:
+def test_derive_frame_preview_keeps_story_names_and_uses_stable_reference_order() -> None:
     base = build_frame_base_draft(
         shot_id="shot-1",
         frame_type=ShotFrameType.first,
@@ -329,11 +329,17 @@ def test_derive_frame_preview_replaces_reference_names_with_stable_order() -> No
     assert "构图锚点：以门口灯光和主角站位作为画面重心，保持环境与人物同时可读" not in preview.rendered_prompt
     assert "朝向与视线：保持张三与李四的左右站位和对视方向稳定，避免无故翻转朝向" not in preview.rendered_prompt
     assert "人物面部约束：如画面中有人物，必须保留清晰可辨的原创虚构人脸和完整自然五官" in preview.rendered_prompt
+    assert "人物身份锁定：图1（张三）、图2（李四）是人物身份与脸部特征的唯一来源" in preview.rendered_prompt
+    assert "必须保持对应角色的脸型轮廓、五官比例、眼型、鼻型、嘴型、下巴轮廓、发际线、发型、神态气质和年龄感" in preview.rendered_prompt
+    assert "不得重绘成另一张脸" in preview.rendered_prompt
     assert "不要生成无脸、遮脸、背影替代、面部模糊或五官缺失" in preview.rendered_prompt
     assert "高质量影视概念参考图" in preview.rendered_prompt
     assert "避免真实摄影照片、街拍、证件照或真人抓拍质感" in preview.rendered_prompt
     assert "不要模仿任何真实个人、明星、公众人物或版权角色" in preview.rendered_prompt
-    assert "图1在雨夜中逼近图2" in preview.rendered_prompt
+    assert "张三在雨夜中逼近李四" in preview.rendered_prompt
+    assert "图1在雨夜中逼近图2" not in preview.rendered_prompt
+    assert "图1: 张三" in preview.rendered_prompt
+    assert "图2: 李四" in preview.rendered_prompt
 
 
 def test_derive_frame_preview_does_not_add_face_prompt_for_scene_only_frame() -> None:
@@ -357,6 +363,49 @@ def test_derive_frame_preview_does_not_add_face_prompt_for_scene_only_frame() ->
 
     assert "空旷大厅的清晨光线" in preview.rendered_prompt
     assert "人物面部约束" not in preview.rendered_prompt
+
+
+def test_derive_frame_preview_adds_typed_reference_usage_contract() -> None:
+    base = build_frame_base_draft(
+        shot_id="shot-contract",
+        frame_type=ShotFrameType.first,
+        prompt="艾铃站在婚房里，手持团扇",
+        director_command_summary="必须：保持人物身份稳定",
+        continuity_guidance="",
+        frame_specific_guidance="首帧建立婚房空间与人物站位",
+        composition_anchor="",
+        screen_direction_guidance="",
+    )
+    context = build_frame_context(
+        shot_id="shot-contract",
+        frame_type=ShotFrameType.first,
+        items=[
+            ShotLinkedAssetItem(id="char-1", type="character", name="艾铃", file_id="char-file"),
+            ShotLinkedAssetItem(id="costume-1", type="costume", name="大婚衣服", file_id="costume-file"),
+            ShotLinkedAssetItem(id="scene-1", type="scene", name="婚房", file_id="scene-file"),
+            ShotLinkedAssetItem(id="prop-1", type="prop", name="团扇", file_id="prop-file"),
+        ],
+    )
+
+    preview = derive_frame_preview(base=base, context=context)
+
+    assert "## 参考图使用规则" in preview.rendered_prompt
+    assert "第1张输入参考图（图1，艾铃）是角色身份参考" in preview.rendered_prompt
+    assert "必须保持脸型轮廓、五官比例、眼型、鼻型、嘴型、下巴轮廓、发际线和神态气质" in preview.rendered_prompt
+    assert "第2张输入参考图（图2，大婚衣服）是服装参考" in preview.rendered_prompt
+    assert "必须逐项保持参考服装的主色、辅色、纹样、材质和层次" in preview.rendered_prompt
+    assert "即使剧情出现婚礼、嫁娶、大婚或退婚等语义，也不得把服装默认改成红色婚服" in preview.rendered_prompt
+    assert "必须忽略该图中的人脸、发型、身体姿势、手持物、背景与场景" in preview.rendered_prompt
+    assert "第3张输入参考图（图3，婚房）是场景参考" in preview.rendered_prompt
+    assert "必须忽略该图中的人物、脸、服装、动作和临时道具" in preview.rendered_prompt
+    assert "第4张输入参考图（图4，团扇）是道具参考" in preview.rendered_prompt
+    assert "必须忽略该图中的人物、手、脸、服装、背景和摆拍环境" in preview.rendered_prompt
+    assert "不同类型参考图不得互相覆盖职责" in preview.rendered_prompt
+    assert "非角色参考图中若出现人脸或人物，必须视为无关信息" in preview.rendered_prompt
+    assert "不得改变角色参考图确定的人脸与身份" in preview.rendered_prompt
+    assert "服装参考图的颜色、款式、纹样和层次优先于剧情词、时代词与类型片常识" in preview.rendered_prompt
+    assert "不得因为“大婚”“婚房”“嫁娶”等文字把服装自动改红或替换为其他婚服" in preview.rendered_prompt
+    assert "人物身份锁定：图1（艾铃）是人物身份与脸部特征的唯一来源" in preview.rendered_prompt
 
 
 def test_derive_frame_preview_prioritizes_composition_for_first_frame() -> None:

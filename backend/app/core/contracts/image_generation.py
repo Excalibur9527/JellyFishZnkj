@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.core.contracts.provider import ProviderKey
 
 ResponseFormat = Literal["url", "b64_json"]
+ImageInputFidelity = Literal["high", "low"]
 ImageTargetRatio = Literal["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "3:2", "2:3"]
 ImageResolutionProfile = Literal["standard", "high"]
 ImagePurpose = Literal["generic", "video_reference", "asset_image"]
@@ -79,6 +80,10 @@ class ImageGenerationInput(BaseModel):
     response_format: ResponseFormat = Field(
         "url",
         description="返回格式：url 或 b64_json（OpenAI 语义）；火山引擎可忽略或仅支持 url",
+    )
+    input_fidelity: Optional[ImageInputFidelity] = Field(
+        None,
+        description="参考图保真强度；OpenAI 图片编辑中 high 会更努力保留输入图特征，尤其是人脸特征",
     )
 
     @model_validator(mode="after")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import ssl
 import time
@@ -72,7 +73,21 @@ class OpenAIImageApiAdapter:
                             multipart.append(("model", (None, resolved_input.model)))
                         if resolved_input.size:
                             multipart.append(("size", (None, resolved_input.size)))
+                        input_fidelity = _resolve_edit_input_fidelity(
+                            model=resolved_input.model,
+                            requested=resolved_input.input_fidelity,
+                        )
+                        if input_fidelity:
+                            multipart.append(("input_fidelity", (None, input_fidelity)))
+                        multipart.extend(
+                            [
+                                ("stream", (None, "true")),
+                                ("partial_images", (None, "1")),
+                            ]
+                        )
 
+                        uploaded_ref_count = 0
+                        uploaded_ref_bytes = 0
                         for i, ref in enumerate(resolved_input.images):
                             if ref.image_url and ref.image_url.startswith("data:"):
                                 header, encoded = ref.image_url.split(",", 1)
@@ -82,8 +97,10 @@ class OpenAIImageApiAdapter:
                                 # 压缩参考图：转为 JPEG 且长边不超过 1024px，减少上传体积
                                 img_bytes, mime_type = _compress_ref_image(img_bytes, mime_type, max_side=1024)
                                 ext = "jpg" if "jpeg" in mime_type or "jpg" in mime_type else mime_type.split("/")[-1]
+                                uploaded_ref_count += 1
+                                uploaded_ref_bytes += len(img_bytes)
                                 multipart.append(
-                                    (f"image[{i}]", (f"ref_{i}.{ext}", img_bytes, mime_type))
+                                    ("image", (f"ref_{i}.{ext}", img_bytes, mime_type))
                                 )
                             elif ref.image_url:
                                 img_resp = await client.get(ref.image_url)
@@ -91,9 +108,17 @@ class OpenAIImageApiAdapter:
                                 mime_type = img_resp.headers.get("content-type", "image/png").split(";")[0]
                                 img_bytes, mime_type = _compress_ref_image(img_resp.content, mime_type, max_side=1024)
                                 ext = "jpg" if "jpeg" in mime_type or "jpg" in mime_type else mime_type.split("/")[-1]
+                                uploaded_ref_count += 1
+                                uploaded_ref_bytes += len(img_bytes)
                                 multipart.append(
-                                    (f"image[{i}]", (f"ref_{i}.{ext}", img_bytes, mime_type))
+                                    ("image", (f"ref_{i}.{ext}", img_bytes, mime_type))
                                 )
+
+                        if uploaded_ref_count != len(resolved_input.images):
+                            raise RuntimeError(
+                                f"image edit reference upload mismatch: expected {len(resolved_input.images)}, "
+                                f"uploaded {uploaded_ref_count}"
+                            )
 
                         edit_headers = {"Authorization": f"Bearer {cfg.api_key}"}
                         url = f"{base_url}/images/edits"
@@ -103,7 +128,18 @@ class OpenAIImageApiAdapter:
                             method="POST",
                             url=url,
                             headers=edit_headers,
-                            body_log=json_dumps_for_log({"prompt": resolved_input.prompt, "n": resolved_input.n, "image_count": len(resolved_input.images)}),
+                            body_log=json_dumps_for_log(
+                                {
+                                    "prompt": resolved_input.prompt,
+                                    "n": resolved_input.n,
+                                    "image_count": len(resolved_input.images),
+                                    "uploaded_image_count": uploaded_ref_count,
+                                    "uploaded_image_bytes": uploaded_ref_bytes,
+                                    "multipart_image_field": "image",
+                                    "input_fidelity": input_fidelity,
+                                    "size": resolved_input.size,
+                                }
+                            ),
                         )
                         r = await client.post(url, headers=edit_headers, files=multipart)
                     else:
@@ -111,6 +147,8 @@ class OpenAIImageApiAdapter:
                             "prompt": resolved_input.prompt,
                             "n": resolved_input.n,
                             "response_format": "b64_json",
+                            "stream": True,
+                            "partial_images": 1,
                         }
                         if resolved_input.model:
                             body["model"] = resolved_input.model
@@ -145,6 +183,9 @@ class OpenAIImageApiAdapter:
                     )
 
                     r.raise_for_status()
+                    content_type = str(r.headers.get("content-type") or "").lower()
+                    if "text/event-stream" in content_type or resp_text.lstrip().startswith("data:"):
+                        return _parse_openai_images_stream(resp_text)
                     data = r.json()
 
                 return _parse_openai_images_payload(data)
@@ -208,6 +249,23 @@ async def _async_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
+def _resolve_edit_input_fidelity(*, model: str | None, requested: str | None) -> str | None:
+    """为 GPT Image 编辑请求选择参考图保真强度。
+
+    OpenAI 的图片编辑接口提供 `input_fidelity` 来提高输入图特征匹配，
+    尤其是人脸特征。分镜帧带参考图时通常需要身份一致性，因此默认使用
+    high；`gpt-image-1-mini` 不支持该参数，需跳过。
+    """
+
+    normalized_model = (model or "").strip().lower()
+    if normalized_model.startswith("gpt-image-1-mini"):
+        return None
+    value = (requested or "high").strip().lower()
+    if value not in {"high", "low"}:
+        return "high"
+    return value
+
+
 def _parse_openai_images_payload(data: dict[str, Any]) -> ImageGenerationResult:
     raw_items = data.get("data") or []
     images: list[ImageItem] = []
@@ -228,4 +286,57 @@ def _parse_openai_images_payload(data: dict[str, Any]) -> ImageGenerationResult:
         provider="openai",
         provider_task_id=None,
         status=str(data.get("status") or "succeeded"),
+    )
+
+
+def _parse_openai_images_stream(payload: str) -> ImageGenerationResult:
+    """解析 OpenAI Images SSE，优先采用 completed，缺失时采用最后一张 partial。
+
+    流式模式让长耗时图片请求在生成过程中持续产生响应字节，避免兼容网关因
+    长时间无响应而断开连接。只解析图片事件，不对断连请求进行自动重放。
+    """
+
+    completed_item: ImageItem | None = None
+    latest_partial_item: ImageItem | None = None
+    provider_task_id: str | None = None
+    terminal_status = "succeeded"
+
+    for raw_line in (payload or "").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("data:"):
+            continue
+        raw_data = line[5:].strip()
+        if not raw_data or raw_data == "[DONE]":
+            continue
+        try:
+            event = json.loads(raw_data)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        event_type = str(event.get("type") or "")
+        provider_task_id = str(event.get("id") or provider_task_id or "") or None
+        b64_json = event.get("b64_json") or event.get("partial_image_b64")
+        image_url = event.get("url")
+        if not b64_json and not image_url:
+            continue
+        item = ImageItem(
+            url=str(image_url) if image_url else None,
+            b64_json=str(b64_json) if b64_json else None,
+        )
+        if event_type.endswith(".completed"):
+            completed_item = item
+            terminal_status = "succeeded"
+        elif event_type.endswith(".partial_image"):
+            latest_partial_item = item
+
+    image = completed_item or latest_partial_item
+    if image is None:
+        raise RuntimeError("OpenAI images stream ended without a usable image event")
+    return ImageGenerationResult(
+        images=[image],
+        provider="openai",
+        provider_task_id=provider_task_id,
+        status=terminal_status,
     )

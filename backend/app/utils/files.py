@@ -118,13 +118,16 @@ async def create_file_from_url_or_b64(
     )
 
     file_id = str(uuid.uuid4())
+    # storage.upload_file 会根据当前存储后端返回真实可读 key。
+    # 本地存储模式下该值带有 local-file: 前缀；若继续保存原始 key，
+    # 下载接口会误走 S3 分支，导致前端拿到裂图。
     file_obj = FileItem(
         id=file_id,
         type=file_type,
         name=display_name,
         thumbnail=info.url,
         tags=[],
-        storage_key=key,
+        storage_key=info.key,
     )
     session.add(file_obj)
     await session.flush()
@@ -144,4 +147,3 @@ async def create_file_from_url_or_b64(
         )
 
     return file_obj
-
