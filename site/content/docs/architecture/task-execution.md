@@ -95,6 +95,7 @@ Broker：Redis
   - SQLite 默认走本地后台线程
   - 非 SQLite 环境默认走 Celery
 - 本地开发若只启动 FastAPI + Vite，可使用 `auto` 或显式 `local`，避免任务长期停在 `pending 0%`
+- 本地 SQLite 连接当前设置 30 秒 `busy_timeout`，并启用 `WAL + synchronous=NORMAL`；任务状态写入、运行时摘要刷新、任务中心轮询短暂并发时，数据库会尽量允许读写并行并等待锁释放，而不是立即让业务任务失败为 `database is locked`
 - `backend/.env` 由 `app.config` 按绝对路径加载，避免 worker 因工作目录变化回退到默认 SQLite
 
 ## 已切到 Celery 的任务

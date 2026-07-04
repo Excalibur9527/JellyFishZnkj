@@ -509,6 +509,43 @@ async def test_sync_from_extraction_draft_persists_dialogue_candidates() -> None
 
 
 @pytest.mark.asyncio
+async def test_sync_from_extraction_draft_falls_back_to_quoted_dialogue() -> None:
+    db, engine = await _build_session()
+    async with db:
+        shot = await _seed_graph(db)
+        draft = StudioScriptExtractionDraft(
+            project_id="project-1",
+            chapter_id="chapter-1",
+            script_text="测试文本",
+            characters=[],
+            scenes=[],
+            props=[],
+            costumes=[],
+            shots=[
+                StudioShotDraft(
+                    index=1,
+                    title="镜头一",
+                    script_excerpt="侍女低声问：“姑娘怕什么？”艾铃答：“我不是怕他跑。”",
+                    scene_name=None,
+                    character_names=[],
+                    prop_names=[],
+                    costume_names=[],
+                    dialogue_lines=[],
+                    actions=[],
+                )
+            ],
+        )
+
+        await sync_shot_extracted_dialogue_candidates_from_draft(db, chapter_id="chapter-1", draft=draft)
+        rows = await list_shot_extracted_dialogue_candidates(db, shot_id=shot.id)
+
+        assert [row.text for row in rows] == ["姑娘怕什么？", "我不是怕他跑。"]
+        assert all(row.source == "quote_fallback" for row in rows)
+        assert all(row.candidate_status == ShotDialogueCandidateStatus.pending for row in rows)
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_mark_shot_generating_keeps_static_ready_status() -> None:
     db, engine = await _build_session()
     async with db:

@@ -9,6 +9,15 @@ from app.schemas.studio.files import (
     FileUsageRead,
     FileUsageWrite,
 )
+from app.schemas.studio.audio import (
+    AttachShotAudioFileRequest,
+    GenerateShotTtsRequest,
+    GenerateShotTtsResponse,
+    MuxShotVideoAudioRequest,
+    MuxShotVideoAudioResponse,
+    ShotAudioClipRead,
+    ShotAudioClipTypeEnum,
+)
 from app.schemas.studio.prompts import (
     PromptCategoryOptionRead,
     PromptTemplateCreate,

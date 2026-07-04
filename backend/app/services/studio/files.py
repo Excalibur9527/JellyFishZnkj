@@ -27,11 +27,14 @@ FILE_ORDER_FIELDS = {"name", "created_at", "updated_at"}
 
 
 def _detect_file_type(filename: str) -> FileType:
+    """根据文件名后缀判断素材类型，避免音频上传被误归为图片。"""
     _, ext = os.path.splitext(filename.lower())
     if ext in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
         return FileType.image
     if ext in {".mp4", ".mov", ".mkv", ".avi", ".webm"}:
         return FileType.video
+    if ext in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".aiff", ".aif"}:
+        return FileType.audio
     raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext or '未知后缀'}")
 
 
@@ -52,6 +55,14 @@ def _resolve_download_media_type(filename: str) -> str:
         ".gif": "image/gif",
         ".mp4": "video/mp4",
         ".mov": "video/quicktime",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".aiff": "audio/aiff",
+        ".aif": "audio/aiff",
     }
     if ext in media_types:
         return media_types[ext]
@@ -77,6 +88,8 @@ def _resolve_download_filename(
         return f"{candidate}.png"
     if file_item.type == FileType.video:
         return f"{candidate}.mp4"
+    if file_item.type == FileType.audio:
+        return f"{candidate}.m4a"
     return candidate
 
 
@@ -226,7 +239,11 @@ async def build_download_response(
         storage_filename=storage_filename,
         content_type=media_type,
     )
-    disposition_kind = "inline" if media_type.startswith("image/") or media_type.startswith("video/") else "attachment"
+    disposition_kind = (
+        "inline"
+        if media_type.startswith("image/") or media_type.startswith("video/") or media_type.startswith("audio/")
+        else "attachment"
+    )
     content_disposition = f"{disposition_kind}; filename*=UTF-8''{quote(filename)}"
     return StreamingResponse(
         iter([content]),

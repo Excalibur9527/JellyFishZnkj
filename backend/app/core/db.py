@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     AsyncEngine,
@@ -15,11 +15,40 @@ from app.config import settings
 
 
 def _build_engine() -> AsyncEngine:
-    return create_async_engine(
+    """创建异步数据库引擎，并为本地 SQLite 开发库开启等待锁释放。
+
+    本地工作室会同时进行任务轮询、运行时摘要刷新和生成任务状态落库。
+    SQLite 只能同时处理有限写入；如果不配置 busy timeout，短暂撞锁会被
+    立即抛成 ``database is locked``，导致提示词/图片/视频任务误失败。
+    """
+
+    engine_options: dict[str, Any] = {}
+    database_url = str(settings.database_url or "").strip().lower()
+    if database_url.startswith("sqlite"):
+        engine_options["connect_args"] = {"timeout": 30}
+
+    built_engine = create_async_engine(
         settings.database_url,
         echo=settings.debug,
         future=True,
+        **engine_options,
     )
+    if database_url.startswith("sqlite"):
+        sync_engine = built_engine.sync_engine
+
+        @event.listens_for(sync_engine, "connect")
+        def _set_sqlite_busy_timeout(dbapi_connection: Any, _connection_record: Any) -> None:
+            """优化本地 SQLite 并发读写，避免工作室轮询与任务落库互相卡死。"""
+
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA busy_timeout = 30000")
+                cursor.execute("PRAGMA journal_mode = WAL")
+                cursor.execute("PRAGMA synchronous = NORMAL")
+            finally:
+                cursor.close()
+
+    return built_engine
 
 
 def _build_session_maker(bind_engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

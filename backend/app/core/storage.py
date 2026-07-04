@@ -242,6 +242,14 @@ async def get_file_info(*, key: str) -> StoredFileInfo:
                 ".mp4": "video/mp4",
                 ".mov": "video/quicktime",
                 ".webm": "video/webm",
+                ".mp3": "audio/mpeg",
+                ".wav": "audio/wav",
+                ".m4a": "audio/mp4",
+                ".aac": "audio/aac",
+                ".ogg": "audio/ogg",
+                ".flac": "audio/flac",
+                ".aiff": "audio/aiff",
+                ".aif": "audio/aiff",
             }
             return stat.st_size, content_type_map.get(suffix)
 
