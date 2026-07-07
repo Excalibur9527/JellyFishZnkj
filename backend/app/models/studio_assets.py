@@ -186,6 +186,12 @@ class Actor(Base, TimestampMixin):
         default="",
         comment="视觉指纹：AI 优化后的外貌描述",
     )
+    voice_profile: Mapped[dict] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+        comment="演员声线配置：按 TTS 供应商保存音色 ID、语速等参数，供角色对白配音继承",
+    )
 
     prompt_template: Mapped["PromptTemplate | None"] = relationship()
     images: Mapped[list["ActorImage"]] = relationship(
@@ -251,6 +257,12 @@ class Character(Base, TimestampMixin):
         nullable=True,
         index=True,
         comment="服装 ID（可空）；应用层需保证与角色同项目或全局",
+    )
+    voice_profile: Mapped[dict] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+        comment="角色声线配置：优先级高于关联演员，用于同一角色跨镜头保持声音一致",
     )
 
     project: Mapped["Project"] = relationship(back_populates="characters")

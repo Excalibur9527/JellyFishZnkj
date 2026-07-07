@@ -537,6 +537,7 @@ const ChapterStudio: React.FC = () => {
   const [shotAudioClips, setShotAudioClips] = useState<ShotAudioClipRead[]>([])
   const [ttsGenerating, setTtsGenerating] = useState(false)
   const [audioUploading, setAudioUploading] = useState(false)
+  const [audioMuxing, setAudioMuxing] = useState(false)
   const [frameImages, setFrameImages] = useState<ShotFrameImageRead[]>([])
   const [sceneLinks, setSceneLinks] = useState<ProjectSceneLinkRead[]>([])
   const [actorImageLinks, setActorImageLinks] = useState<ProjectActorLinkRead[]>([])
@@ -1033,6 +1034,38 @@ const ChapterStudio: React.FC = () => {
       message.error(error?.body?.detail || error?.message || '上传音频失败')
     } finally {
       setAudioUploading(false)
+    }
+  }
+
+  const handleMuxShotAudio = async () => {
+    if (!selectedShotId) return
+    if (!selectedShot?.generated_video_file_id) {
+      message.warning('当前镜头还没有已生成视频，请先生成视频，再合成声音。')
+      return
+    }
+    if (shotAudioClips.length === 0) {
+      message.warning('当前镜头还没有音频片段，请先生成对白配音或上传音频。')
+      return
+    }
+    setAudioMuxing(true)
+    try {
+      const res = await StudioAudioService.muxShotVideoAudioApiApiV1StudioAudioShotsShotIdMuxVideoPost({
+        shotId: selectedShotId,
+        requestBody: {
+          output_name: `${selectedShot.title || selectedShot.index || '镜头'} - 有声视频`,
+        },
+      })
+      const fileId = res.data?.file?.id
+      if (!fileId) {
+        throw new Error('合成成功但没有返回视频文件 ID')
+      }
+      patchShotInList(selectedShotId, { generated_video_file_id: fileId } as Partial<StudioShot>)
+      setPreviewVideoFileId(fileId)
+      message.success('有声视频已合成，并已切换为当前预览视频')
+    } catch (error: any) {
+      message.error(error?.body?.detail || error?.message || '有声视频合成失败')
+    } finally {
+      setAudioMuxing(false)
     }
   }
 
@@ -2750,8 +2783,10 @@ const ChapterStudio: React.FC = () => {
                 shotAudioClips={shotAudioClips}
                 ttsGenerating={ttsGenerating}
                 audioUploading={audioUploading}
+                audioMuxing={audioMuxing}
                 onGenerateShotTts={handleGenerateShotTts}
                 onUploadShotAudio={handleUploadShotAudio}
+                onMuxShotAudio={handleMuxShotAudio}
                 cameraUpdating={cameraUpdating}
                 promptAssetsUpdating={promptAssetsUpdating}
                 onDeleteDialogLine={deleteDialogLine}
@@ -2829,8 +2864,10 @@ const ChapterStudio: React.FC = () => {
                     shotAudioClips={shotAudioClips}
                     ttsGenerating={ttsGenerating}
                     audioUploading={audioUploading}
+                    audioMuxing={audioMuxing}
                     onGenerateShotTts={handleGenerateShotTts}
                     onUploadShotAudio={handleUploadShotAudio}
+                    onMuxShotAudio={handleMuxShotAudio}
                     cameraUpdating={cameraUpdating}
                     promptAssetsUpdating={promptAssetsUpdating}
                     onDeleteDialogLine={deleteDialogLine}
@@ -2975,8 +3012,10 @@ function Inspector(props: {
   shotAudioClips: ShotAudioClipRead[]
   ttsGenerating: boolean
   audioUploading: boolean
+  audioMuxing: boolean
   onGenerateShotTts: () => Promise<void>
   onUploadShotAudio: (file: File) => Promise<void>
+  onMuxShotAudio: () => Promise<void>
   cameraUpdating: boolean
   promptAssetsUpdating: boolean
   onDeleteDialogLine: (lineId: number) => Promise<void>
@@ -3017,8 +3056,10 @@ function Inspector(props: {
     shotAudioClips,
     ttsGenerating,
     audioUploading,
+    audioMuxing,
     onGenerateShotTts,
     onUploadShotAudio,
+    onMuxShotAudio,
     cameraUpdating,
     promptAssetsUpdating,
     onDeleteDialogLine,
@@ -5855,6 +5896,34 @@ function Inspector(props: {
 
                     <div className="cs-group">
                       <div className="cs-group-title">
+                        <VideoCameraAddOutlined /> 有声视频合成
+                      </div>
+                      <div className="space-y-3">
+                        <div className="text-xs text-gray-500">
+                          这里会把当前镜头的已生成视频与下方音频片段合成为一个新的有声视频；不会向视频模型重新生成画面。
+                        </div>
+                        <Button
+                          block
+                          type="primary"
+                          icon={<MergeCellsOutlined />}
+                          loading={audioMuxing}
+                          disabled={!selectedShot?.generated_video_file_id || shotAudioClips.length === 0}
+                          onClick={onMuxShotAudio}
+                        >
+                          合成有声视频
+                        </Button>
+                        {!selectedShot?.generated_video_file_id ? (
+                          <div className="text-xs text-amber-600">当前镜头还没有生成视频，先到「视频生成」里生成画面。</div>
+                        ) : shotAudioClips.length === 0 ? (
+                          <div className="text-xs text-amber-600">当前镜头还没有音频片段，先生成对白配音或上传音频。</div>
+                        ) : (
+                          <div className="text-xs text-gray-400">合成成功后，主预览区会自动切到新的有声视频。</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="cs-group">
+                      <div className="cs-group-title">
                         <CustomerServiceOutlined /> 配乐
                       </div>
                       <div className="space-y-3">
@@ -5863,11 +5932,11 @@ function Inspector(props: {
                           onChange={(e) => setAudioMode(e.target.value)}
                           options={[
                             { value: 'none', label: '无' },
-                            { value: 'prompt', label: '提示词' },
+                            { value: 'prompt', label: '提示词', disabled: true },
                             { value: 'upload', label: '上传音频' },
                           ]}
                         />
-                        {audioMode === 'prompt' && <TextArea rows={3} placeholder="配乐提示词（支持多版本）…" />}
+                        {audioMode === 'prompt' && <TextArea rows={3} disabled placeholder="配乐提示词生成暂未接入，当前请先使用上传音频。" />}
                         {audioMode === 'upload' && (
                           <Upload
                             accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.aiff,.aif"
@@ -5890,8 +5959,8 @@ function Inspector(props: {
                         <SoundOutlined /> 音效
                       </div>
                       <div className="space-y-3">
-                        <Button block icon={<UploadOutlined />}>
-                          添加一条音效（Mock）
+                        <Button block icon={<UploadOutlined />} disabled>
+                          添加音效（暂未接入）
                         </Button>
                       </div>
                     </div>
@@ -5903,16 +5972,17 @@ function Inspector(props: {
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-sm">关闭配乐</span>
-                          <Switch />
+                          <Switch disabled />
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-sm">关闭对白</span>
-                          <Switch />
+                          <Switch disabled />
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-sm">智能对口型</span>
-                          <Switch />
+                          <Switch disabled />
                         </div>
+                        <div className="text-xs text-gray-400">这些开关会在后续接入全片音轨/口型流程后开放。</div>
                       </div>
                     </div>
                   </div>

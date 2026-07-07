@@ -105,6 +105,18 @@ async def init_db() -> None:
         if "reference_assets" not in columns:
             # 现有开发库由 create_all 管理；create_all 不会给旧表补列，因此在启动时幂等补齐。
             await conn.execute(text("ALTER TABLE shot_frame_images ADD COLUMN reference_assets JSON"))
+        actor_columns = await conn.run_sync(
+            lambda sync_conn: {item["name"] for item in inspect(sync_conn).get_columns("actors")}
+        )
+        if "voice_profile" not in actor_columns:
+            # 声线配置需要跟随演员资产持久化；旧开发库启动时幂等补齐。
+            await conn.execute(text("ALTER TABLE actors ADD COLUMN voice_profile JSON NOT NULL DEFAULT '{}'"))
+        character_columns = await conn.run_sync(
+            lambda sync_conn: {item["name"] for item in inspect(sync_conn).get_columns("characters")}
+        )
+        if "voice_profile" not in character_columns:
+            # 角色可覆盖演员声线，因此角色表也需要独立保存 voice_profile。
+            await conn.execute(text("ALTER TABLE characters ADD COLUMN voice_profile JSON NOT NULL DEFAULT '{}'"))
 
 
 async def close_db() -> None:

@@ -221,6 +221,10 @@ backend/app/services/studio/generation/
 - 工作室“音视频控制”中的“上传音频”会先创建 `FileItem(type=audio)`，再调用 `/api/v1/studio/audio/shots/{shot_id}/clips` 绑定为当前镜头音频片段。
 - `/api/v1/studio/audio/shots/{shot_id}/tts` 当前使用 macOS 本机 `say + afconvert` 根据已确认 `ShotDialogLine` 生成 m4a：
   - 一条对白生成一个音频文件；
+  - 若请求没有显式传 `voice`，系统会按 `ShotDialogLine.speaker_character_id / speaker_name` 解析说话角色；
+  - 声线优先级为：请求临时覆盖 `voice` > `Character.voice_profile.local_say` > `Actor.voice_profile.local_say` > 系统默认声音；
+  - `Actor.voice_profile` 表示演员默认声线，`Character.voice_profile` 表示角色专属声线，用于同一角色跨镜头保持一致、同一演员饰演不同角色时可覆盖区分；
+  - 演员资产编辑页与角色资产编辑页的“基础信息展示”会展示“声线设置”，可维护本机 TTS 声音名、语速，并上传声音样本文件；当前本机 TTS 不克隆样本音色，样本用于记录参考与后续云 TTS/声音克隆接入；
   - 每条音频都会写入 `FileItem(type=audio)` 与 `ShotAudioClip`；
   - 若镜头没有已确认对白，接口返回明确错误，引导先回分镜编辑页确认或新增对白。
 - 对白候选来自信息提取结果中的 `dialogue_lines`；若提取结果漏掉对白但镜头摘录存在完整引号台词，系统会用引号兜底生成 `quote_fallback` 待确认候选，避免明确写在剧本里的台词完全丢失。
@@ -229,7 +233,10 @@ backend/app/services/studio/generation/
   - 若运行环境缺少 `ffmpeg`，接口返回明确的依赖错误；
   - 不再把“无法合成声音”伪装成普通视频生成失败；
   - 若 `ffmpeg` 可用，会下载当前镜头视频与 `ShotAudioClip` 音频文件，按 `start_ms / volume` 混音生成新的 mp4，并回写为镜头当前视频；
+  - 合成输出以原视频时长为准：音频短时不裁掉画面，音频长时不把镜头拖成长尾空画面；
+  - 工作室“音视频控制”中提供“合成有声视频”按钮，只有当前镜头同时存在已生成视频与音频片段时可用；
   - 当前混音对象优先覆盖已生成对白音频，BGM 与音效会继续复用同一张 `ShotAudioClip` 表扩展。
+- 当前配乐提示词生成、音效自动生成与智能口型开关仍未接入正式后端流程；工作室侧不会把这些未完成入口表现成可执行能力。
 
 因此当前视频生成仍只负责画面文件；声音由独立音频链路生成、保存与后续合成。
 

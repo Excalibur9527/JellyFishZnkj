@@ -9,6 +9,7 @@ import RoleDetailPage from './pages/aiStudio/project/ProjectWorkbench/RoleDetail
 import ChapterStudio from './pages/aiStudio/chapter/ChapterStudio'
 import AssetManager from './pages/aiStudio/assets/AssetManager'
 import ActorAssetEditPage from './pages/aiStudio/assets/ActorAssetEditPage.tsx'
+import CharacterAssetEditPage from './pages/aiStudio/assets/CharacterAssetEditPage.tsx'
 import SceneAssetEditPage from './pages/aiStudio/assets/SceneAssetEditPage.tsx'
 import PropAssetEditPage from './pages/aiStudio/assets/PropAssetEditPage.tsx'
 import CostumeAssetEditPage from './pages/aiStudio/assets/CostumeAssetEditPage.tsx'
@@ -39,6 +40,7 @@ const App: React.FC = () => {
           <Route path="projects/:projectId/editor" element={<VideoEditor />} />
           <Route path="assets" element={<AssetManager />} />
           <Route path="assets/actors/:actorImageId/edit" element={<ActorAssetEditPage />} />
+          <Route path="assets/characters/:characterId/edit" element={<CharacterAssetEditPage />} />
           <Route path="assets/scenes/:sceneId/edit" element={<SceneAssetEditPage />} />
           <Route path="assets/props/:propId/edit" element={<PropAssetEditPage />} />
           <Route path="assets/costumes/:costumeId/edit" element={<CostumeAssetEditPage />} />
@@ -56,4 +58,3 @@ const App: React.FC = () => {
 }
 
 export default App
-
