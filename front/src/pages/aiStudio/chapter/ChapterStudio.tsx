@@ -308,6 +308,26 @@ type InspectorTabKey = 'ops' | 'camera' | 'prompt_image' | 'dialogue' | 'keyfram
 
 const LAYOUT_STORAGE_KEY = 'jellyfish_chapter_studio_layout_v1'
 type PromptFrameType = 'first' | 'key' | 'last'
+type CreatorWorkflowAction =
+  | 'none'
+  | 'go_prepare'
+  | 'generate_first_frame'
+  | 'generate_key_frame'
+  | 'generate_last_frame'
+  | 'generate_video'
+  | 'generate_tts'
+  | 'mux_audio'
+type CreatorWorkflowStage = 'prepare' | 'frames' | 'video' | 'audio' | 'done'
+type CreatorWorkflowState = {
+  stage: CreatorWorkflowStage
+  tone: 'default' | 'blue' | 'green' | 'gold' | 'purple'
+  title: string
+  description: string
+  primaryLabel: string
+  primaryAction: CreatorWorkflowAction
+  advancedTab: InspectorTabKey
+  checklist: Array<{ label: string; done: boolean; hint: string }>
+}
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
@@ -315,6 +335,205 @@ function clamp(n: number, min: number, max: number) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+/**
+ * 判断指定帧位是否已经有可用于生成视频的图片。
+ *
+ * 这个判断服务于创作者工作流面板：它不改变底层生成能力，只把首帧、
+ * 关键帧和尾帧这些专业概念转换成用户能看懂的“还差哪一步”。
+ */
+function hasUsableFrameImage(frameImages: ShotFrameImageRead[], frameType: PromptFrameType): boolean {
+  return frameImages.some((item) => item.frame_type === frameType && String(item.file_id ?? '').trim().length > 0)
+}
+
+/**
+ * 把工作室里的技术状态聚合成一个创作者可执行的下一步。
+ *
+ * 工作室仍然保留关键帧、提示词、诊断等高级页签；这个函数只负责把
+ * 分散在准备状态、帧图、视频、音频里的信号整理成“现在最该点什么”。
+ */
+function buildCreatorWorkflowState(args: {
+  selectedShot: StudioShot | null
+  frameImages: ShotFrameImageRead[]
+  dialogLines: ShotDialogLineRead[]
+  shotCandidateItems: ShotExtractedCandidateRead[]
+  shotDialogueCandidateItems: ShotExtractedDialogueCandidateRead[]
+  shotAudioClips: ShotAudioClipRead[]
+  videoReadiness: ShotVideoReadinessRead | null
+  videoReadinessLoading: boolean
+}): CreatorWorkflowState {
+  const {
+    selectedShot,
+    frameImages,
+    dialogLines,
+    shotCandidateItems,
+    shotDialogueCandidateItems,
+    shotAudioClips,
+    videoReadiness,
+    videoReadinessLoading,
+  } = args
+  const firstFrameReady = hasUsableFrameImage(frameImages, 'first')
+  const keyFrameReady = hasUsableFrameImage(frameImages, 'key')
+  const lastFrameReady = hasUsableFrameImage(frameImages, 'last')
+  const hasVideo = Boolean(selectedShot?.generated_video_file_id?.trim())
+  const hasDialogue = dialogLines.some((line) => String(line.text ?? '').trim().length > 0)
+  const hasAudio = shotAudioClips.length > 0
+  const pendingAssetCount = shotCandidateItems.filter((item) => item.candidate_status === 'pending').length
+  const pendingDialogueCount = shotDialogueCandidateItems.filter((item) => item.candidate_status === 'pending').length
+  const extractionCheck = videoReadiness?.checks?.find((check) => check.key === 'extraction_ready')
+  const preparationReady =
+    Boolean(selectedShot) &&
+    selectedShot?.status === 'ready' &&
+    pendingAssetCount === 0 &&
+    pendingDialogueCount === 0 &&
+    extractionCheck?.ok !== false
+  const checklist = [
+    {
+      label: '分镜准备',
+      done: preparationReady,
+      hint:
+        pendingAssetCount > 0 || pendingDialogueCount > 0
+          ? `还有资产 ${pendingAssetCount} 项、对白 ${pendingDialogueCount} 项待确认`
+          : preparationReady
+          ? '已完成'
+          : videoReadinessLoading
+          ? '正在检查'
+          : '需要先回到分镜编辑页确认',
+    },
+    {
+      label: '画面参考',
+      done: firstFrameReady && keyFrameReady && lastFrameReady,
+      hint: `首帧${firstFrameReady ? '已好' : '未生成'} / 关键帧${keyFrameReady ? '已好' : '未生成'} / 尾帧${
+        lastFrameReady ? '已好' : '未生成'
+      }`,
+    },
+    {
+      label: '视频',
+      done: hasVideo,
+      hint: hasVideo ? '已有视频' : '还没有生成视频',
+    },
+    {
+      label: '声音',
+      done: !hasDialogue || hasAudio,
+      hint: !hasDialogue ? '当前镜头无对白' : hasAudio ? '已有对白音频' : '有对白但还没有配音',
+    },
+  ]
+
+  if (!selectedShot) {
+    return {
+      stage: 'prepare',
+      tone: 'default',
+      title: '先选择一个镜头',
+      description: '左侧选中镜头后，这里会告诉你下一步该做什么。',
+      primaryLabel: '等待选择',
+      primaryAction: 'none',
+      advancedTab: 'camera',
+      checklist,
+    }
+  }
+
+  if (!preparationReady) {
+    return {
+      stage: 'prepare',
+      tone: 'gold',
+      title: '先完成分镜准备',
+      description: '当前镜头还有提取确认或基础信息没有收口，建议先回到分镜编辑页处理，再回来生成。',
+      primaryLabel: '去分镜编辑页确认',
+      primaryAction: 'go_prepare',
+      advancedTab: 'prompt_image',
+      checklist,
+    }
+  }
+
+  if (!firstFrameReady) {
+    return {
+      stage: 'frames',
+      tone: 'blue',
+      title: '先生成首帧',
+      description: '首帧负责建立镜头开场、空间和人物初始状态，是后续视频生成最重要的入口参考。',
+      primaryLabel: '生成首帧',
+      primaryAction: 'generate_first_frame',
+      advancedTab: 'keyframe_gen',
+      checklist,
+    }
+  }
+
+  if (!keyFrameReady) {
+    return {
+      stage: 'frames',
+      tone: 'blue',
+      title: '补齐关键帧',
+      description: '关键帧负责表达镜头中段的动作峰值或关键情绪，让视频运动不只靠模型猜。',
+      primaryLabel: '生成关键帧',
+      primaryAction: 'generate_key_frame',
+      advancedTab: 'keyframe_gen',
+      checklist,
+    }
+  }
+
+  if (!lastFrameReady) {
+    return {
+      stage: 'frames',
+      tone: 'blue',
+      title: '补齐尾帧',
+      description: '尾帧负责镜头收束和下一镜头衔接，完整首/中/尾后更适合生成稳定视频。',
+      primaryLabel: '生成尾帧',
+      primaryAction: 'generate_last_frame',
+      advancedTab: 'keyframe_gen',
+      checklist,
+    }
+  }
+
+  if (!hasVideo) {
+    return {
+      stage: 'video',
+      tone: 'purple',
+      title: '可以生成视频了',
+      description: '当前镜头已经有首帧、关键帧和尾帧，下一步预览视频提示词并提交生成。',
+      primaryLabel: '预览并生成视频',
+      primaryAction: 'generate_video',
+      advancedTab: 'gen_ref',
+      checklist,
+    }
+  }
+
+  if (hasDialogue && !hasAudio) {
+    return {
+      stage: 'audio',
+      tone: 'green',
+      title: '补上对白配音',
+      description: '当前镜头已有视频，也识别到了对白。建议先生成角色绑定的对白音频。',
+      primaryLabel: '生成对白配音',
+      primaryAction: 'generate_tts',
+      advancedTab: 'av',
+      checklist,
+    }
+  }
+
+  if (hasDialogue && hasAudio) {
+    return {
+      stage: 'audio',
+      tone: 'green',
+      title: '合成有声视频',
+      description: '视频和对白音频都已经存在，可以把它们合成为当前镜头的有声版本。',
+      primaryLabel: '合成有声视频',
+      primaryAction: 'mux_audio',
+      advancedTab: 'av',
+      checklist,
+    }
+  }
+
+  return {
+    stage: 'done',
+    tone: 'green',
+    title: '当前镜头已可预览',
+    description: '这个镜头没有需要自动配音的对白，可以继续检查效果，或切到下一个镜头。',
+    primaryLabel: '查看生成结果',
+    primaryAction: 'none',
+    advancedTab: 'gen_ref',
+    checklist,
+  }
 }
 
 function getResolutionProfileLabel(profile: KeyframeResolutionProfile): string {
@@ -480,7 +699,7 @@ function useLocalStoragePrefs() {
         return {
           leftWidth: 280,
           rightWidth: 420,
-          inspectorOpen: false,
+          inspectorOpen: true,
           inspectorMode: 'push',
           autoOpenInspector: true,
           timelineCollapsed: false,
@@ -490,7 +709,7 @@ function useLocalStoragePrefs() {
       return {
         leftWidth: typeof parsed.leftWidth === 'number' ? parsed.leftWidth : 280,
         rightWidth: typeof parsed.rightWidth === 'number' ? parsed.rightWidth : 420,
-        inspectorOpen: typeof parsed.inspectorOpen === 'boolean' ? parsed.inspectorOpen : false,
+        inspectorOpen: typeof parsed.inspectorOpen === 'boolean' ? parsed.inspectorOpen : true,
         inspectorMode: parsed.inspectorMode === 'overlay' ? 'overlay' : 'push',
         autoOpenInspector: typeof parsed.autoOpenInspector === 'boolean' ? parsed.autoOpenInspector : true,
         timelineCollapsed: typeof parsed.timelineCollapsed === 'boolean' ? parsed.timelineCollapsed : false,
@@ -499,7 +718,7 @@ function useLocalStoragePrefs() {
       return {
         leftWidth: 280,
         rightWidth: 420,
-        inspectorOpen: false,
+        inspectorOpen: true,
         inspectorMode: 'push',
         autoOpenInspector: true,
         timelineCollapsed: false,
@@ -1513,15 +1732,15 @@ const ChapterStudio: React.FC = () => {
     [currentFrameFileId],
   )
 
-  // 选中分镜后若开启自动展开属性面板：默认展开（尤其是未就绪分镜）
+  // 选中分镜后若开启自动展开属性面板：始终展开生成面板。
+  //
+  // 工作室右侧承载“创作者下一步”，如果只在未就绪镜头展开，ready 镜头反而
+  // 看不到生成引导。这里让任意镜头选中后都回到可见的生成工作区。
   useEffect(() => {
     if (!selectedShot) return
     if (!prefs.autoOpenInspector) return
     if (prefs.inspectorOpen) return
-    // “若无视频则自动展开”：这里用 status !== ready 作为近似判定
-    if (selectedShot.status !== 'ready') {
-      setPrefs((p) => ({ ...p, inspectorOpen: true }))
-    }
+    setPrefs((p) => ({ ...p, inspectorOpen: true }))
   }, [prefs.autoOpenInspector, prefs.inspectorOpen, selectedShot, setPrefs])
 
   const lastSavedDetailRef = useRef<ShotDetailRead | null>(null)
@@ -2810,9 +3029,9 @@ const ChapterStudio: React.FC = () => {
               <div
                 className="cs-right-strip"
                 onClick={() => setPrefs((p) => ({ ...p, inspectorOpen: true }))}
-                title="展开属性面板（P / Ctrl/Cmd+I）"
+                title="展开创作者下一步（P / Ctrl/Cmd+I）"
               >
-                <span>属性</span>
+                <span>下一步</span>
               </div>
             )}
           </>
@@ -5049,6 +5268,89 @@ function Inspector(props: {
   }, [selectedShot?.id, frameImages.map((x) => `${x.id}:${x.file_id ?? ''}`).join('|')])
 
   const pendingDialogueCandidates = shotDialogueCandidateItems.filter((item) => item.candidate_status === 'pending')
+  const creatorWorkflowState = useMemo(
+    () =>
+      buildCreatorWorkflowState({
+        selectedShot,
+        frameImages,
+        dialogLines,
+        shotCandidateItems,
+        shotDialogueCandidateItems,
+        shotAudioClips,
+        videoReadiness,
+        videoReadinessLoading,
+      }),
+    [
+      dialogLines,
+      frameImages,
+      selectedShot,
+      shotAudioClips,
+      shotCandidateItems,
+      shotDialogueCandidateItems,
+      videoReadiness,
+      videoReadinessLoading,
+    ],
+  )
+  const creatorWorkflowToneColor: Record<CreatorWorkflowState['tone'], string> = {
+    default: 'default',
+    blue: 'blue',
+    green: 'green',
+    gold: 'gold',
+    purple: 'purple',
+  }
+  const creatorWorkflowActionLoading =
+    keyframePromptPreviewLoading ||
+    keyframePromptActionLoading ||
+    videoPromptPreviewLoading ||
+    videoPromptPreviewSubmitting ||
+    ttsGenerating ||
+    audioMuxing
+
+  /**
+   * 执行创作者工作流面板的主动作。
+   *
+   * 面板只调度已有的工作室能力：准备回流到编辑页，帧图和视频仍走
+   * 原来的提示词预览与任务系统，音频仍走现有 TTS / 合成接口。
+   */
+  const runCreatorWorkflowPrimaryAction = () => {
+    const generateFrame = (frameType: PromptFrameType) => {
+      setInspectorTabKey('keyframe_gen')
+      void generateKeyframeCard(frameType)
+    }
+
+    if (creatorWorkflowState.primaryAction === 'go_prepare') {
+      goToShotEditForAssets()
+      return
+    }
+    if (creatorWorkflowState.primaryAction === 'generate_first_frame') {
+      generateFrame('first')
+      return
+    }
+    if (creatorWorkflowState.primaryAction === 'generate_key_frame') {
+      generateFrame('key')
+      return
+    }
+    if (creatorWorkflowState.primaryAction === 'generate_last_frame') {
+      generateFrame('last')
+      return
+    }
+    if (creatorWorkflowState.primaryAction === 'generate_video') {
+      setInspectorTabKey('gen_ref')
+      void openVideoPromptPreview()
+      return
+    }
+    if (creatorWorkflowState.primaryAction === 'generate_tts') {
+      setInspectorTabKey('av')
+      void onGenerateShotTts()
+      return
+    }
+    if (creatorWorkflowState.primaryAction === 'mux_audio') {
+      setInspectorTabKey('av')
+      void onMuxShotAudio()
+      return
+    }
+    setInspectorTabKey(creatorWorkflowState.advancedTab)
+  }
 
   return (
     <div className="w-full h-full flex flex-col min-h-0">
@@ -5067,6 +5369,49 @@ function Inspector(props: {
       </div>
 
       <div className="cs-inspector flex-1 min-h-0 overflow-auto">
+        <Card
+          size="small"
+          className="m-3 mb-2"
+          title={
+            <Space size="small">
+              <ThunderboltOutlined />
+              <span>创作者下一步</span>
+              <Tag color={creatorWorkflowToneColor[creatorWorkflowState.tone]}>{creatorWorkflowState.title}</Tag>
+            </Space>
+          }
+          extra={
+            <Button size="small" type="link" onClick={() => setInspectorTabKey(creatorWorkflowState.advancedTab)}>
+              打开对应设置
+            </Button>
+          }
+        >
+          <div className="text-sm text-gray-600 leading-6">{creatorWorkflowState.description}</div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {creatorWorkflowState.checklist.map((item) => (
+              <div key={item.label} className="rounded border border-gray-100 bg-gray-50 px-2 py-1.5">
+                <Space size={4}>
+                  {item.done ? <CheckCircleOutlined className="text-green-500" /> : <ClockCircleOutlined className="text-gray-400" />}
+                  <span className="text-xs font-medium">{item.label}</span>
+                </Space>
+                <div className="text-[11px] text-gray-500 mt-1 truncate" title={item.hint}>
+                  {item.hint}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <Button
+              type="primary"
+              block
+              disabled={creatorWorkflowState.primaryAction === 'none'}
+              loading={creatorWorkflowActionLoading && creatorWorkflowState.primaryAction !== 'none'}
+              onClick={runCreatorWorkflowPrimaryAction}
+            >
+              {creatorWorkflowState.primaryLabel}
+            </Button>
+            <Button onClick={() => setInspectorTabKey(creatorWorkflowState.advancedTab)}>高级</Button>
+          </div>
+        </Card>
         <Tabs
           tabPosition="left"
           activeKey={inspectorTabKey}
