@@ -162,6 +162,40 @@ function getAssetNavigateRelationType(relationType: string): string | null {
   return null
 }
 
+function readVoiceProfileString(profile: Record<string, unknown> | null | undefined, key: string): string {
+  const localSay = profile?.local_say
+  const source = localSay && typeof localSay === 'object' && !Array.isArray(localSay)
+    ? (localSay as Record<string, unknown>)
+    : (profile ?? {})
+  const value = source[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function readVoiceProfileNumber(profile: Record<string, unknown> | null | undefined, key: string): number | null {
+  const localSay = profile?.local_say
+  const source = localSay && typeof localSay === 'object' && !Array.isArray(localSay)
+    ? (localSay as Record<string, unknown>)
+    : (profile ?? {})
+  const value = source[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value)
+  return null
+}
+
+function buildVoiceProfilePayload(opts: {
+  voice: string
+  rate: number | null
+  sampleFileId: string
+  sampleFileName: string
+}): Record<string, unknown> {
+  const localSay: Record<string, unknown> = {}
+  if (opts.voice.trim()) localSay.voice = opts.voice.trim()
+  if (opts.rate !== null) localSay.rate = opts.rate
+  if (opts.sampleFileId.trim()) localSay.sample_file_id = opts.sampleFileId.trim()
+  if (opts.sampleFileName.trim()) localSay.sample_file_name = opts.sampleFileName.trim()
+  return { local_say: localSay }
+}
+
 export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseAssetImage>({
   assetId,
   missingAssetIdText,
@@ -880,6 +914,97 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
                       placeholder="智能检测后自动填入，或手动输入：瓜子脸，丹凤眼，长直发黑色，白皙，高挑，白色旗袍"
                     />
                   </div>
+                ) : null}
+                {(relationType === 'character_image' || relationType === 'actor_image') ? (
+                  <Card
+                    size="small"
+                    title="声线设置"
+                    className="bg-slate-50"
+                    extra={<Tag color={relationType === 'character_image' ? 'purple' : 'blue'}>{relationType === 'character_image' ? '角色声线' : '演员声线'}</Tag>}
+                  >
+                    <div className="space-y-3">
+                      <div className="text-xs text-gray-500">
+                        配音生成会优先使用角色声线；角色未设置时继承关联演员声线。上传的音频样本会作为声音参考文件保存，当前本机 TTS 仍使用下方声音名和语速。
+                      </div>
+                      <Row gutter={[12, 12]}>
+                        <Col xs={24} md={12}>
+                          <div className="text-gray-600 text-sm mb-1">本机 TTS 声音名</div>
+                          <Input
+                            value={formVoiceName}
+                            onChange={(e) => setFormVoiceName(e.target.value)}
+                            disabled={smartDetectBusy || savingBase}
+                            placeholder="例如 Tingting / Sinji / Meijia；留空使用系统默认"
+                          />
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <div className="text-gray-600 text-sm mb-1">语速</div>
+                          <InputNumber
+                            className="w-full"
+                            min={80}
+                            max={320}
+                            precision={0}
+                            value={formVoiceRate ?? undefined}
+                            onChange={(v) => setFormVoiceRate(typeof v === 'number' ? v : null)}
+                            disabled={smartDetectBusy || savingBase}
+                            placeholder="留空使用系统默认"
+                          />
+                        </Col>
+                      </Row>
+                      <div>
+                        <div className="text-gray-600 text-sm mb-1">声音样本</div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Upload
+                            accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.aiff,.aif"
+                            showUploadList={false}
+                            customRequest={async ({ file, onSuccess, onError }) => {
+                              try {
+                                setVoiceSampleUploading(true)
+                                const uploaded = file as File
+                                const res = await StudioFilesService.uploadFileApiApiV1StudioFilesUploadPost({
+                                  formData: { file: uploaded as any },
+                                })
+                                const fileId = res.data?.id
+                                if (!fileId) throw new Error('上传未返回文件 ID')
+                                setFormVoiceSampleFileId(fileId)
+                                setFormVoiceSampleFileName(uploaded.name)
+                                message.success('声音样本已上传，请点击“保存基础信息”完成绑定')
+                                onSuccess?.({})
+                              } catch (error) {
+                                const text = defaultTaskActionErrorMessage(error, '声音样本上传失败')
+                                message.error(text)
+                                onError?.(new Error(text))
+                              } finally {
+                                setVoiceSampleUploading(false)
+                              }
+                            }}
+                          >
+                            <Button icon={<UploadOutlined />} loading={voiceSampleUploading} disabled={smartDetectBusy || savingBase}>
+                              上传音频样本
+                            </Button>
+                          </Upload>
+                          {formVoiceSampleFileId ? (
+                            <Button
+                              size="small"
+                              danger
+                              onClick={() => {
+                                setFormVoiceSampleFileId('')
+                                setFormVoiceSampleFileName('')
+                              }}
+                              disabled={smartDetectBusy || savingBase}
+                            >
+                              移除样本
+                            </Button>
+                          ) : null}
+                          {formVoiceSampleFileName ? <Tag>{formVoiceSampleFileName}</Tag> : null}
+                        </div>
+                        {formVoiceSampleFileId ? (
+                          <audio className="mt-2 w-full" controls src={buildFileDownloadUrl(formVoiceSampleFileId) ?? undefined} />
+                        ) : (
+                          <div className="mt-2 text-xs text-gray-400">还没有上传声音样本。</div>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
                 ) : null}
                 <div>
                   <div className="text-gray-600 text-sm mb-1">标签（逗号分隔）</div>

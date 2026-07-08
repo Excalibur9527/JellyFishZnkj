@@ -10,6 +10,12 @@ from app.models.studio import ProjectStyle, ProjectVisualStyle
 
 
 class ActorBase(BaseModel):
+    """演员基础信息。
+
+    `voice_profile` 用于把演员资产扩展成“形象 + 声音”资产；角色未设置
+    专属声线时，会继承关联演员的声线配置。
+    """
+
     id: str = Field(..., description="演员 ID")
     name: str = Field(..., description="名称")
     description: str = Field("", description="描述")
@@ -18,6 +24,7 @@ class ActorBase(BaseModel):
     view_count: int = Field(1, ge=1, description="计划为该演员生成的视角图片数量（不含分镜帧）")
     style: ProjectStyle = Field(ProjectStyle.real_people_city, description="题材/风格")
     visual_style: ProjectVisualStyle = Field(ProjectVisualStyle.live_action, description="画面表现形式（真人/动漫等）")
+    voice_profile: dict = Field(default_factory=dict, description="演员声线配置；例如 {'local_say': {'voice': 'Tingting', 'rate': 180}}")
 
 
 class ActorCreate(ActorBase):
@@ -44,6 +51,8 @@ class ActorCreate(ActorBase):
 
 
 class ActorUpdate(BaseModel):
+    """演员更新字段。"""
+
     name: str | None = None
     description: str | None = None
     tags: list[str] | None = None
@@ -60,6 +69,11 @@ class ActorRead(ActorBase):
 
 
 class CharacterBase(BaseModel):
+    """角色基础信息。
+
+    角色声线优先于演员声线，用于同一演员饰演多个角色时仍能区分声音。
+    """
+
     id: str = Field(..., description="角色 ID")
     project_id: str = Field(..., description="所属项目 ID")
     name: str = Field(..., description="角色名称")
@@ -68,6 +82,7 @@ class CharacterBase(BaseModel):
     visual_style: ProjectVisualStyle = Field(ProjectVisualStyle.live_action, description="画面表现形式（现实/动漫等）")
     actor_id: str | None = Field(None, description="演员 ID（可空；用于仅导入角色文案但不关联演员时）")
     costume_id: str | None = Field(None, description="服装 ID（可空）")
+    voice_profile: dict = Field(default_factory=dict, description="角色声线配置；为空时继承关联演员声线")
 
 
 class CharacterCreate(CharacterBase):
@@ -93,6 +108,8 @@ class CharacterCreate(CharacterBase):
 
 
 class CharacterUpdate(BaseModel):
+    """角色更新字段。"""
+
     project_id: str | None = None
     name: str | None = None
     description: str | None = None
@@ -102,6 +119,7 @@ class CharacterUpdate(BaseModel):
     costume_id: str | None = None
     view_count: int | None = Field(None, ge=1)
     visual_fingerprint: str | None = None
+    voice_profile: dict | None = None
 
 
 class CharacterRead(CharacterBase):

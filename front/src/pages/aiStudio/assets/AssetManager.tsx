@@ -2,15 +2,16 @@ import { useEffect, useState } from 'react'
 import { Card, Tabs } from 'antd'
 import { useSearchParams } from 'react-router-dom'
 import { ActorsTab } from './tabs/ActorsTab'
+import { CharactersTab } from './tabs/CharactersTab'
 import { ScenesTab } from './tabs/ScenesTab'
 import { PropsTab } from './tabs/PropsTab'
 import { CostumesTab } from './tabs/CostumesTab'
 
 const TAB_PARAM = 'tab'
-type AssetTabKey = 'actor' | 'scene' | 'prop' | 'costume'
+type AssetTabKey = 'actor' | 'character' | 'scene' | 'prop' | 'costume'
 
 function isValidTab(tab: string | null): tab is AssetTabKey {
-  return tab === 'actor' || tab === 'scene' || tab === 'prop' || tab === 'costume'
+  return tab === 'actor' || tab === 'character' || tab === 'scene' || tab === 'prop' || tab === 'costume'
 }
 
 const AssetManager = () => {
@@ -55,6 +56,7 @@ const AssetManager = () => {
           }}
           items={[
             { key: 'actor', label: '演员', children: <ActorsTab /> },
+            { key: 'character', label: '角色', children: <CharactersTab /> },
             { key: 'scene', label: '场景', children: <ScenesTab /> },
             { key: 'prop', label: '道具', children: <PropsTab /> },
             { key: 'costume', label: '服装', children: <CostumesTab /> },
