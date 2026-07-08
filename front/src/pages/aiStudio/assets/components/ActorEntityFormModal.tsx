@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
-import { randomUUID } from '../../../../utils/uuid'
 import { Input, InputNumber, Modal, message } from 'antd'
 import { StudioEntitiesApi } from '../../../../services/studioEntities'
-import { StudioShotLinksService } from '../../../../services/generated'
 import { ProjectVisualStyleAndStyleFields } from '../../project/ProjectVisualStyleAndStyleFields'
 import { useProjectStyleOptions } from '../../project/useProjectStyleOptions'
 
@@ -21,19 +19,6 @@ function normalizeTags(input: string): string[] {
     .split(/[,，\n]/g)
     .map((t) => t.trim())
     .filter(Boolean)
-}
-
-/**
- * 统一抽取 OpenAPI client 抛出的业务错误，避免前端把后端明确信息吞成笼统 toast。
- */
-function getApiErrorDetail(error: unknown, fallback: string): string {
-  if (error && typeof error === 'object' && 'body' in error) {
-    const body = (error as { body?: { detail?: string; message?: string } }).body
-    if (typeof body?.detail === 'string' && body.detail.trim()) return body.detail
-    if (typeof body?.message === 'string' && body.message.trim()) return body.message
-  }
-  if (error instanceof Error && error.message.trim()) return error.message
-  return fallback
 }
 
 export function ActorEntityFormModal({
@@ -92,7 +77,7 @@ export function ActorEntityFormModal({
     try {
       if (!editing) {
         const created = await StudioEntitiesApi.create('actor', {
-          id: randomUUID(),
+          id: crypto?.randomUUID?.() ?? `actor_${Date.now()}`,
           name,
           description: formDesc.trim() || undefined,
           tags: normalizeTags(formTags),
@@ -120,43 +105,8 @@ export function ActorEntityFormModal({
         onCancel()
         await onSuccess()
       }
-    } catch (error) {
-      const detail = getApiErrorDetail(error, editing ? '更新失败' : '创建失败')
-
-      if (!editing && linkProjectId && detail.includes('名称已存在')) {
-        try {
-          // 项目页新建演员时，若资产库里已有同名演员，则直接复用并关联到当前项目。
-          const actorList = await StudioEntitiesApi.list('actor', {
-            page: 1,
-            pageSize: 100,
-            q: name,
-            order: 'updated_at',
-            isDesc: true,
-          })
-          const existing = (actorList.data?.items ?? []).find(
-            (item) => typeof item?.name === 'string' && item.name.trim() === name,
-          ) as ActorEntityLike | undefined
-          if (existing) {
-            await StudioShotLinksService.createProjectActorLinkApiV1StudioShotLinksActorPost({
-              requestBody: {
-                project_id: linkProjectId,
-                chapter_id: linkChapterId ?? null,
-                shot_id: linkShotId ?? null,
-                asset_id: existing.id,
-              },
-            })
-            message.success('同名演员已存在，已自动关联到当前项目')
-            onCancel()
-            await onSuccess({ created: existing })
-            return
-          }
-        } catch (linkError) {
-          message.error(getApiErrorDetail(linkError, detail))
-          return Promise.reject(new Error('api'))
-        }
-      }
-
-      message.error(detail)
+    } catch {
+      message.error(editing ? '更新失败' : '创建失败')
       return Promise.reject(new Error('api'))
     }
   }

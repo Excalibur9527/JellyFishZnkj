@@ -20,8 +20,8 @@ docker compose --env-file deploy/compose/.env -f deploy/compose/docker-compose.y
 
 ## 默认访问地址
 
-- 前端：`http://localhost:5678`
-- 后端：`http://localhost:8765`
+- 前端：`http://localhost:7788`
+- 后端：`http://localhost:8000`
 - RustFS Console：`http://localhost:9001`
 
 ## 说明

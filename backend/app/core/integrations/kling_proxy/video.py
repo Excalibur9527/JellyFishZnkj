@@ -85,14 +85,9 @@ _CAMERA_CONTROL_MAP: dict[str, dict[str, Any]] = {
 
 async def _build_body(input_: VideoGenerationInput) -> dict[str, Any]:
     duration = _DURATION_MAP.get(input_.seconds or 5, _DEFAULT_DURATION)
-    prompt = (input_.prompt or "").strip()
-    # 可灵 API 限制 prompt 最多 2500 字符
-    if len(prompt) > 2000:
-        prompt = prompt[:2000]
-    logger.info("KlingProxy prompt: len=%d bytes=%d", len(prompt), len(prompt.encode('utf-8')))
     body: dict[str, Any] = {
         "model_name": (input_.model or "kling-video-o1").strip(),
-        "prompt": prompt,
+        "prompt": (input_.prompt or "").strip(),
         "duration": duration,
         "mode": "std",
     }
@@ -114,10 +109,7 @@ async def _build_body(input_: VideoGenerationInput) -> dict[str, Any]:
 
     for ref_b64 in (input_.character_references or []):
         b64 = _compress_to_b64(ref_b64)
-        # Omni 接口把未声明首/尾帧类型的图片视为普通特征参考。
-        # 中转服务会拒绝旧版自定义值 `type=reference`，因此普通角色参考
-        # 只传 image_url，由供应商按 reference image 处理。
-        image_list.append({"image_url": b64})
+        image_list.append({"image_url": b64, "type": "reference"})
 
     if image_list:
         body["image_list"] = image_list

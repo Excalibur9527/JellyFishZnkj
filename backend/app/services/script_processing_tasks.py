@@ -135,9 +135,7 @@ async def create_divide_task(
     chapter_id: str,
     script_text: str,
     write_to_db: bool,
-    extract_after_divide: bool = False,
 ) -> AsyncTaskCreateResult:
-    """创建剧本分镜任务，并记录是否在写库后继续完成镜头信息提取。"""
     existing = await find_active_divide_task(db, chapter_id=chapter_id)
     if existing is not None:
         status_value = existing.status.value if hasattr(existing.status, "value") else str(existing.status)
@@ -155,7 +153,6 @@ async def create_divide_task(
         "chapter_id": chapter_id,
         "script_text": script_text,
         "write_to_db": write_to_db,
-        "extract_after_divide": extract_after_divide,
     }
     task_record = await tm.create(
         task=_CreateOnlyTask(),

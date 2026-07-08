@@ -212,12 +212,7 @@ def test_create_shot_frame_image_task_renders_prompt_before_submit(client: TestC
     db = _ShotDetailDB()
 
     async def _fake_resolve_image_refs(*_args, **_kwargs):
-        return [
-            {"image_url": "data:image/png;base64,char"},
-            {"image_url": "data:image/png;base64,costume"},
-            {"image_url": "data:image/png;base64,scene"},
-            {"image_url": "data:image/png;base64,prop"},
-        ]
+        return [{"image_url": "data:image/png;base64,abc"}]
 
     async def _fake_load_frame_render_guidance(**_kwargs):
         return {
@@ -236,34 +231,19 @@ def test_create_shot_frame_image_task_renders_prompt_before_submit(client: TestC
         assert "构图锚点：以温室门框和人物站位作为空间锚点，保持环境与人物同时可读" not in kwargs["prompt"]
         assert "朝向与视线：保持陆远与环境入口的视线方向稳定，避免无故翻转朝向" not in kwargs["prompt"]
         assert "图1: 陆远" in kwargs["prompt"]
-        assert "图2: 婚服" in kwargs["prompt"]
-        assert "图3: 温室" in kwargs["prompt"]
-        assert "图4: 团扇" in kwargs["prompt"]
-        assert "第1张输入参考图（图1，陆远）是角色身份参考" in kwargs["prompt"]
-        assert "第2张输入参考图（图2，婚服）是服装参考" in kwargs["prompt"]
-        assert "第3张输入参考图（图3，温室）是场景参考" in kwargs["prompt"]
-        assert "第4张输入参考图（图4，团扇）是道具参考" in kwargs["prompt"]
-        assert kwargs["images"] == [
-            {"image_url": "data:image/png;base64,char"},
-            {"image_url": "data:image/png;base64,costume"},
-            {"image_url": "data:image/png;base64,scene"},
-            {"image_url": "data:image/png;base64,prop"},
-        ]
+        assert kwargs["images"] == [{"image_url": "data:image/png;base64,abc"}]
         assert kwargs["target_ratio"] == "9:16"
         assert kwargs["resolution_profile"] == "standard"
         assert kwargs["purpose"] == "video_reference"
-        assert kwargs["render_context"]["images"] == ["file-1", "file-2", "file-3", "file-4"]
+        assert kwargs["render_context"]["images"] == ["file-1"]
         assert kwargs["render_context"]["mappings"][0]["token"] == "图1"
-        assert kwargs["render_context"]["mappings"][1]["token"] == "图2"
-        assert kwargs["render_context"]["mappings"][2]["token"] == "图3"
-        assert kwargs["render_context"]["mappings"][3]["token"] == "图4"
         assert kwargs["render_context"]["selected_guidance"][0] == "高优先级导演指令：必须：锁定主角视线方向"
         assert kwargs["render_context"]["selected_guidance_details"][1]["reason_tag"] == "首帧保时序"
         assert kwargs["render_context"]["dropped_guidance_details"][0]["reason_tag"] == "首帧降构图"
         assert kwargs["render_context"]["dropped_guidance_details"][1]["reason_tag"] == "首帧降轴线"
         return "task-1"
 
-    monkeypatch.setattr(route, "_resolve_shot_frame_reference_image_refs_service", _fake_resolve_image_refs)
+    monkeypatch.setattr(route, "_resolve_reference_image_refs_by_file_ids_service", _fake_resolve_image_refs)
     monkeypatch.setattr(route, "_load_frame_render_guidance", _fake_load_frame_render_guidance)
     monkeypatch.setattr(route, "_create_image_task_and_link_service", _fake_create_image_task_and_link)
     app.dependency_overrides[get_db] = _override_db(db)
@@ -277,9 +257,6 @@ def test_create_shot_frame_image_task_renders_prompt_before_submit(client: TestC
                 "resolution_profile": "standard",
                 "images": [
                     {"type": "character", "id": "char-1", "name": "陆远", "file_id": "file-1"},
-                    {"type": "costume", "id": "costume-1", "name": "婚服", "file_id": "file-2"},
-                    {"type": "scene", "id": "scene-1", "name": "温室", "file_id": "file-3"},
-                    {"type": "prop", "id": "prop-1", "name": "团扇", "file_id": "file-4"},
                 ],
             },
         )
@@ -289,61 +266,6 @@ def test_create_shot_frame_image_task_renders_prompt_before_submit(client: TestC
     assert response.status_code == 201
     body = response.json()
     assert body["data"]["task_id"] == "task-1"
-
-
-def test_create_shot_frame_image_task_rejects_unresolved_linked_reference(client: TestClient, monkeypatch) -> None:
-    class _ShotDetailDB(_DummyDB):
-        async def get(self, model, ident):
-            if getattr(model, "__name__", "") == "ShotDetail" and ident == "shot-1":
-                return object()
-            return None
-
-    db = _ShotDetailDB()
-
-    async def _fake_resolve_image_refs(*_args, **_kwargs):
-        return [
-            {"image_url": "data:image/png;base64,char"},
-            {"image_url": "data:image/png;base64,costume"},
-            {"image_url": "data:image/png;base64,scene"},
-        ]
-
-    async def _fake_load_frame_render_guidance(**_kwargs):
-        return {
-            "director_command_summary": "",
-            "continuity_guidance": "",
-            "frame_specific_guidance": "",
-            "composition_anchor": "",
-            "screen_direction_guidance": "",
-        }
-
-    async def _fake_create_image_task_and_link(*_args, **_kwargs):
-        raise AssertionError("task should not be created when a linked reference cannot be resolved")
-
-    monkeypatch.setattr(route, "_resolve_shot_frame_reference_image_refs_service", _fake_resolve_image_refs)
-    monkeypatch.setattr(route, "_load_frame_render_guidance", _fake_load_frame_render_guidance)
-    monkeypatch.setattr(route, "_create_image_task_and_link_service", _fake_create_image_task_and_link)
-    app.dependency_overrides[get_db] = _override_db(db)
-    try:
-        response = client.post(
-            "/api/v1/studio/image-tasks/shot/shot-1/frame-image-tasks",
-            json={
-                "frame_type": "first",
-                "prompt": "陆远站在温室里",
-                "target_ratio": "9:16",
-                "resolution_profile": "standard",
-                "images": [
-                    {"type": "character", "id": "char-1", "name": "陆远", "file_id": "file-1"},
-                    {"type": "costume", "id": "costume-1", "name": "婚服", "file_id": "file-2"},
-                    {"type": "scene", "id": "scene-1", "name": "温室", "file_id": "file-3"},
-                    {"type": "prop", "id": "prop-1", "name": "团扇", "file_id": "file-4"},
-                ],
-            },
-        )
-    finally:
-        app.dependency_overrides.clear()
-
-    assert response.status_code == 400
-    assert response.json()["message"] == "reference images unresolved: expected 4, got 3"
 
 
 def test_run_image_generation_task_persists_render_context(monkeypatch) -> None:
@@ -401,15 +323,9 @@ def test_run_image_generation_task_persists_render_context(monkeypatch) -> None:
     async def _fake_resolve_related_shot_id(*_args, **_kwargs):
         return None
 
-    async def _fake_load_provider_config(*_args, **_kwargs):
-        from app.core.contracts.provider import ProviderConfig
-
-        return ProviderConfig(provider="openai", api_key="runtime-secret", base_url=None)
-
     monkeypatch.setattr(runner, "SqlAlchemyTaskStore", _FakeTaskStore)
     monkeypatch.setattr(runner, "async_session_maker", lambda: _FakeSessionContext())
     monkeypatch.setattr(runner, "ImageGenerationTask", _FakeImageTask)
-    monkeypatch.setattr(runner, "load_provider_config", _fake_load_provider_config)
     monkeypatch.setattr(runner, "cancel_if_requested_async", _fake_cancel_if_requested_async)
     monkeypatch.setattr(runner, "_persist_images_to_assets", _fake_persist_images_to_assets)
     monkeypatch.setattr(runner, "_resolve_related_shot_id", _fake_resolve_related_shot_id)
@@ -422,7 +338,8 @@ def test_run_image_generation_task_persists_render_context(monkeypatch) -> None:
             "task-1",
             {
                 "provider": "openai",
-                "provider_id": "provider-1",
+                "api_key": "k",
+                "base_url": None,
                 "relation_type": "shot_frame_image",
                 "relation_entity_id": "1",
                 "render_context": {

@@ -54,50 +54,38 @@ async function resolveTaskMeta(task: TaskUiItem): Promise<ResolvedTaskMeta | nul
   const relationEntityId = task.navigateRelationEntityId ?? task.relationEntityId
 
   if (relationType && relationEntityId && CHAPTER_RELATION_TYPES.has(relationType)) {
-    try {
-      const res = await StudioChaptersService.getChapterApiV1StudioChaptersChapterIdGet({
-        chapterId: relationEntityId,
-      })
-      const chapter = res.data
-      if (!chapter) return null
-      return {
-        sourceLabel: chapter.title ? `章节：${chapter.title}` : `章节：${relationEntityId}`,
-        navigateTo: getChapterShotsPath(chapter.project_id, chapter.id),
-      }
-    } catch {
-      return {
-        sourceLabel: `章节：${relationEntityId}`,
-        navigateTo: null,
-      }
+    const res = await StudioChaptersService.getChapterApiV1StudioChaptersChapterIdGet({
+      chapterId: relationEntityId,
+    })
+    const chapter = res.data
+    if (!chapter) return null
+    return {
+      sourceLabel: chapter.title ? `章节：${chapter.title}` : `章节：${relationEntityId}`,
+      navigateTo: getChapterShotsPath(chapter.project_id, chapter.id),
     }
   }
 
   if (relationType && relationEntityId && (SHOT_RELATION_TYPES.has(relationType) || relationType === 'shot')) {
-    try {
-      const shotRes = await StudioShotsService.getShotApiV1StudioShotsShotIdGet({
-        shotId: relationEntityId,
-      })
-      const shot = shotRes.data
-      if (!shot) return null
-      const chapterRes = await StudioChaptersService.getChapterApiV1StudioChaptersChapterIdGet({
-        chapterId: shot.chapter_id,
-      })
-      const chapter = chapterRes.data
-      if (!chapter) {
-        return {
-          sourceLabel: shot.title ? `镜头：${shot.title}` : `镜头：${relationEntityId}`,
-          navigateTo: null,
-        }
-      }
+    const shotRes = await StudioShotsService.getShotApiV1StudioShotsShotIdGet({
+      shotId: relationEntityId,
+    })
+    const shot = shotRes.data
+    if (!shot) return null
+    const chapterRes = await StudioChaptersService.getChapterApiV1StudioChaptersChapterIdGet({
+      chapterId: shot.chapter_id,
+    })
+    const chapter = chapterRes.data
+    if (!chapter) {
       return {
         sourceLabel: shot.title ? `镜头：${shot.title}` : `镜头：${relationEntityId}`,
-        navigateTo: getChapterStudioPath(chapter.project_id, chapter.id),
-      }
-    } catch {
-      return {
-        sourceLabel: `镜头：${relationEntityId}`,
         navigateTo: null,
       }
+    }
+    return {
+      sourceLabel: shot.title
+        ? `镜头：${shot.title}（第 ${shot.index} 镜）`
+        : `镜头：${relationEntityId}`,
+      navigateTo: getChapterStudioPath(chapter.project_id, chapter.id),
     }
   }
 

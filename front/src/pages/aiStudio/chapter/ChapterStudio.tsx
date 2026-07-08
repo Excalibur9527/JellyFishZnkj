@@ -19,7 +19,6 @@ import {
   Tabs,
   Tag,
   Tooltip,
-  Upload,
   message,
 } from 'antd'
 import {
@@ -62,7 +61,6 @@ import { useLocation, useParams, Link } from 'react-router-dom'
 import {
   FilmService,
   LlmService,
-  StudioAudioService,
   StudioChaptersService,
   StudioEntitiesService,
   StudioFilesService,
@@ -100,12 +98,11 @@ import type {
   ProjectSceneLinkRead,
   ShotStatus,
   ShotVideoPromptPackRead,
-  ShotAudioClipRead,
 } from '../../../services/generated'
 import { listTaskLinksNormalized } from '../../../services/filmTaskLinks'
 import { buildFileDownloadUrl, resolveAssetUrl } from '../assets/utils'
 import type { Chapter } from '../../../mocks/data'
-import { defaultTaskActionErrorMessage, executeTaskCancel } from '../components/taskActionHelpers'
+import { executeTaskCancel } from '../components/taskActionHelpers'
 import { useRelationTaskNotification } from '../components/taskNotificationHelpers'
 import { TASK_COPY } from '../components/taskCopy'
 import { ChapterStudioBatchToolbar } from './components/ChapterStudioBatchToolbar'
@@ -115,7 +112,7 @@ import { ChapterStudioVideoReadinessPanel } from './components/ChapterStudioVide
 import { useGenerationDraft, type GenerationDraftState } from '../hooks/useGenerationDraft'
 import { useTaskPageContext } from '../components/taskPageContext'
 import type { RelationTaskState } from '../project/ProjectWorkbench/chapterDivisionTasks'
-import { isActiveTaskStatus, toRelationTaskStateFromStatusRead } from '../project/ProjectWorkbench/chapterDivisionTasks'
+import { toRelationTaskStateFromStatusRead } from '../project/ProjectWorkbench/chapterDivisionTasks'
 import { useProjectStyleOptions } from '../project/useProjectStyleOptions'
 import './chapterStudio.separation.css'
 
@@ -145,33 +142,6 @@ type VideoPromptDerived = {
   prompt: string
   images: string[]
   pack: ShotVideoPromptPackRead | null
-}
-
-/**
- * 根据当前镜头已有帧构造视频参考输入。
- *
- * 未显式选择时优先采用首帧，其次尾帧、关键帧；只有确实没有参考帧时
- * 才回退到 text_only，避免工作室在已有首帧的情况下静默做纯文本检查。
- */
-function buildVideoReferenceSelection(
-  frameImages: ShotFrameImageRead[],
-  requestedMode?: string,
-): { referenceMode: VideoReferenceMode; images: string[] } {
-  const first = frameImages.find((item) => item.frame_type === 'first')?.file_id ?? null
-  const last = frameImages.find((item) => item.frame_type === 'last')?.file_id ?? null
-  const key = frameImages.find((item) => item.frame_type === 'key')?.file_id ?? null
-  const mode = requestedMode || (first ? 'first' : last ? 'last' : key ? 'key' : 'text_only')
-
-  if (mode === 'first_last_key' && first && last && key) {
-    return { referenceMode: 'first_last_key', images: [first, last, key] }
-  }
-  if (mode === 'first_last' && first && last) {
-    return { referenceMode: 'first_last', images: [first, last] }
-  }
-  if (mode === 'first' && first) return { referenceMode: 'first', images: [first] }
-  if (mode === 'last' && last) return { referenceMode: 'last', images: [last] }
-  if (mode === 'key' && key) return { referenceMode: 'key', images: [key] }
-  return { referenceMode: 'text_only', images: [] }
 }
 
 function normalizeFrameExclusiveTags(tags: string[]): string[] {
@@ -304,7 +274,7 @@ type KeyframeCardState = {
 
 type KeyframeResolutionProfile = 'standard' | 'high'
 
-type InspectorTabKey = 'ops' | 'camera' | 'prompt_image' | 'dialogue' | 'keyframe_gen' | 'av' | 'gen_ref'
+type InspectorTabKey = 'ops' | 'camera' | 'prompt_image' | 'dialogue' | 'keyframe_gen' | 'gen_ref'
 
 const LAYOUT_STORAGE_KEY = 'jellyfish_chapter_studio_layout_v1'
 type PromptFrameType = 'first' | 'key' | 'last'
@@ -534,9 +504,6 @@ const ChapterStudio: React.FC = () => {
   const lastSelectedIndexRef = useRef<number>(-1)
   const [shotDetail, setShotDetail] = useState<ShotDetailRead | null>(null)
   const [dialogLines, setDialogLines] = useState<ShotDialogLineRead[]>([])
-  const [shotAudioClips, setShotAudioClips] = useState<ShotAudioClipRead[]>([])
-  const [ttsGenerating, setTtsGenerating] = useState(false)
-  const [audioUploading, setAudioUploading] = useState(false)
   const [frameImages, setFrameImages] = useState<ShotFrameImageRead[]>([])
   const [sceneLinks, setSceneLinks] = useState<ProjectSceneLinkRead[]>([])
   const [actorImageLinks, setActorImageLinks] = useState<ProjectActorLinkRead[]>([])
@@ -816,7 +783,6 @@ const ChapterStudio: React.FC = () => {
       setShotCharacterLinks([])
       setShotCandidateItems([])
       setShotDialogueCandidateItems([])
-      setShotAudioClips([])
       return
     }
     setLoadingDetail(true)
@@ -893,16 +859,12 @@ const ChapterStudio: React.FC = () => {
       StudioShotsService.getShotExtractedDialogueCandidatesApiV1StudioShotsShotIdExtractedDialogueCandidatesGet({
         shotId: selectedShotId,
       }).then((r) => r.data ?? []),
-      StudioAudioService.listShotAudioClipsApiApiV1StudioAudioShotsShotIdClipsGet({
-        shotId: selectedShotId,
-      }).then((r) => r.data ?? []),
     ])
-      .then(([detail, dialogs, frames, scenes, actors, props, costumes, shotCharacters, candidates, dialogueCandidates, audioClips]) => {
+      .then(([detail, dialogs, frames, scenes, actors, props, costumes, shotCharacters, candidates, dialogueCandidates]) => {
         if (reqSeq !== shotCandidatesRequestSeqRef.current) return
         setShotDetail(detail)
         lastSavedDetailRef.current = detail
         setDialogLines(dialogs)
-        setShotAudioClips(audioClips as ShotAudioClipRead[])
         setFrameImages(frames)
         setSceneLinks(scenes)
         setActorImageLinks(actors)
@@ -965,75 +927,6 @@ const ChapterStudio: React.FC = () => {
       pageSize: 100,
     })
     setDialogLines(res.data?.items ?? [])
-  }
-
-  const refreshShotAudioClips = async (shotId: string) => {
-    const res = await StudioAudioService.listShotAudioClipsApiApiV1StudioAudioShotsShotIdClipsGet({ shotId })
-    setShotAudioClips((res.data ?? []) as ShotAudioClipRead[])
-  }
-
-  const handleGenerateShotTts = async () => {
-    if (!selectedShotId) return
-    if (dialogLines.length === 0) {
-      message.warning('当前镜头还没有已确认对白，请先去分镜编辑页确认或新增对白；如果只是要配乐，请使用下方“上传音频”。')
-      return
-    }
-    setTtsGenerating(true)
-    try {
-      const res = await StudioAudioService.generateShotTtsApiApiV1StudioAudioShotsShotIdTtsPost({
-        shotId: selectedShotId,
-        requestBody: { overwrite: true },
-      })
-      setShotAudioClips((res.data?.clips ?? []) as ShotAudioClipRead[])
-      await refreshShotAudioClips(selectedShotId)
-      message.success(res.data?.message || '配音已生成')
-    } catch (error: any) {
-      message.error(error?.body?.detail || error?.message || '配音生成失败')
-    } finally {
-      setTtsGenerating(false)
-    }
-  }
-
-  const handleUploadShotAudio = async (file: File) => {
-    if (!selectedShotId) {
-      message.warning('请先选择一个镜头')
-      return
-    }
-    setAudioUploading(true)
-    try {
-      const uploadRes = await StudioFilesService.uploadFileApiApiV1StudioFilesUploadPost({
-        formData: {
-          file: file as any,
-          project_id: projectId ?? null,
-          chapter_id: chapterId ?? null,
-          shot_id: selectedShotId,
-          usage_kind: 'upload',
-          source_ref: `shot-audio-upload:${selectedShotId}:${file.name}:${Date.now()}`,
-        },
-        name: file.name,
-      })
-      const fileId = uploadRes.data?.id
-      if (!fileId) {
-        throw new Error('上传成功但没有返回文件 ID')
-      }
-      await StudioAudioService.attachShotAudioFileApiApiV1StudioAudioShotsShotIdClipsPost({
-        shotId: selectedShotId,
-        requestBody: {
-          file_id: fileId,
-          clip_type: 'bgm',
-          label: file.name,
-          start_ms: 0,
-          volume: 100,
-          track: 2,
-        },
-      })
-      await refreshShotAudioClips(selectedShotId)
-      message.success('音频已上传并绑定到当前镜头')
-    } catch (error: any) {
-      message.error(error?.body?.detail || error?.message || '上传音频失败')
-    } finally {
-      setAudioUploading(false)
-    }
   }
 
   const refreshShotFrameImages = useCallback(async () => {
@@ -1243,9 +1136,38 @@ const ChapterStudio: React.FC = () => {
               : d?.key_frame_prompt) ?? ''
         if (!String(prompt || '').trim()) continue
 
-        const imagesPayload = Array.isArray((target as any).reference_assets)
-          ? (target as any).reference_assets
-          : []
+        const linked = await StudioShotsService.listShotLinkedAssetsApiV1StudioShotsShotIdLinkedAssetsGet({
+          shotId: id,
+          page: 1,
+          pageSize: 100,
+        })
+        const items = (linked.data?.items ?? []) as any[]
+        const extractFileId = (thumbnail?: string | null): string | null => {
+          const v = (thumbnail || '').trim()
+          if (!v) return null
+          if (!v.includes('/') && !v.includes(':')) return v
+          try {
+            const url = new URL(v, typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
+            const m = url.pathname.match(/\/api\/v1\/studio\/files\/([^/]+)\/download\/?$/)
+            if (m?.[1]) return decodeURIComponent(m[1])
+          } catch {
+            // ignore
+          }
+          return null
+        }
+        const imagesPayload = items
+          .map((x) => {
+            const fileId = typeof x?.file_id === 'string' && x.file_id.trim() ? x.file_id.trim() : extractFileId(x?.thumbnail)
+            return fileId
+              ? {
+                  type: x?.type as any,
+                  id: String(x?.id ?? ''),
+                  name: String(x?.name ?? x?.id ?? ''),
+                  file_id: fileId,
+                }
+              : null
+          })
+          .filter(Boolean)
         const targetRatio = resolveShotVideoRatio(d)
         if (!targetRatio) continue
         await StudioImageTasksService.createShotFrameImageGenerationTaskApiV1StudioImageTasksShotShotIdFrameImageTasksPost({
@@ -1370,10 +1292,13 @@ const ChapterStudio: React.FC = () => {
 
   const generateFrameImageTask = async () => {
     if (!selectedShotId) return
-    const targetFrameType = frameTab === 'head' ? 'first' : frameTab === 'tail' ? 'last' : 'key'
-    const target = frameImages.find((x) => x.frame_type === targetFrameType)
+    const target =
+      (frameTab === 'head' && frameImages.find((x) => x.frame_type === 'first')) ||
+      (frameTab === 'tail' && frameImages.find((x) => x.frame_type === 'last')) ||
+      frameImages.find((x) => x.frame_type === 'key') ||
+      frameImages[0]
     if (!target) {
-      message.warning('请先为当前帧配置参考素材')
+      message.warning('请先添加一张分镜帧图（frame image）')
       return
     }
     const prompt =
@@ -1388,9 +1313,38 @@ const ChapterStudio: React.FC = () => {
     }
     setGenerating(true)
     try {
-      const imagesPayload = Array.isArray((target as any).reference_assets)
-        ? (target as any).reference_assets
-        : []
+      const linked = await StudioShotsService.listShotLinkedAssetsApiV1StudioShotsShotIdLinkedAssetsGet({
+        shotId: selectedShotId,
+        page: 1,
+        pageSize: 100,
+      })
+      const items = (linked.data?.items ?? []) as any[]
+      const extractFileId = (thumbnail?: string | null): string | null => {
+        const v = (thumbnail || '').trim()
+        if (!v) return null
+        if (!v.includes('/') && !v.includes(':')) return v
+        try {
+          const url = new URL(v, typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
+          const m = url.pathname.match(/\/api\/v1\/studio\/files\/([^/]+)\/download\/?$/)
+          if (m?.[1]) return decodeURIComponent(m[1])
+        } catch {
+          // ignore
+        }
+        return null
+      }
+      const imagesPayload = items
+        .map((x) => {
+          const fileId = typeof x?.file_id === 'string' && x.file_id.trim() ? x.file_id.trim() : extractFileId(x?.thumbnail)
+          return fileId
+            ? {
+                type: x?.type as any,
+                id: String(x?.id ?? ''),
+                name: String(x?.name ?? x?.id ?? ''),
+                file_id: fileId,
+              }
+            : null
+        })
+        .filter(Boolean)
       const targetRatio = resolveShotVideoRatio(shotDetail)
       if (!targetRatio) {
         message.warning('请先设置视频比例')
@@ -2747,11 +2701,6 @@ const ChapterStudio: React.FC = () => {
                 shotCharacterLinks={shotCharacterLinks}
                 shotCandidateItems={shotCandidateItems}
                 shotDialogueCandidateItems={shotDialogueCandidateItems}
-                shotAudioClips={shotAudioClips}
-                ttsGenerating={ttsGenerating}
-                audioUploading={audioUploading}
-                onGenerateShotTts={handleGenerateShotTts}
-                onUploadShotAudio={handleUploadShotAudio}
                 cameraUpdating={cameraUpdating}
                 promptAssetsUpdating={promptAssetsUpdating}
                 onDeleteDialogLine={deleteDialogLine}
@@ -2826,11 +2775,6 @@ const ChapterStudio: React.FC = () => {
                     shotCharacterLinks={shotCharacterLinks}
                     shotCandidateItems={shotCandidateItems}
                     shotDialogueCandidateItems={shotDialogueCandidateItems}
-                    shotAudioClips={shotAudioClips}
-                    ttsGenerating={ttsGenerating}
-                    audioUploading={audioUploading}
-                    onGenerateShotTts={handleGenerateShotTts}
-                    onUploadShotAudio={handleUploadShotAudio}
                     cameraUpdating={cameraUpdating}
                     promptAssetsUpdating={promptAssetsUpdating}
                     onDeleteDialogLine={deleteDialogLine}
@@ -2972,11 +2916,6 @@ function Inspector(props: {
   shotCharacterLinks: ShotCharacterLinkRead[]
   shotCandidateItems: ShotExtractedCandidateRead[]
   shotDialogueCandidateItems: ShotExtractedDialogueCandidateRead[]
-  shotAudioClips: ShotAudioClipRead[]
-  ttsGenerating: boolean
-  audioUploading: boolean
-  onGenerateShotTts: () => Promise<void>
-  onUploadShotAudio: (file: File) => Promise<void>
   cameraUpdating: boolean
   promptAssetsUpdating: boolean
   onDeleteDialogLine: (lineId: number) => Promise<void>
@@ -3011,17 +2950,18 @@ function Inspector(props: {
     dialogLines,
     frameImages,
     sceneLinks,
+    propLinks,
+    costumeLinks,
     shotCharacterLinks,
     shotCandidateItems,
     shotDialogueCandidateItems,
-    shotAudioClips,
-    ttsGenerating,
-    audioUploading,
-    onGenerateShotTts,
-    onUploadShotAudio,
     cameraUpdating,
     promptAssetsUpdating,
     onDeleteDialogLine,
+    onUpdatePromptScene,
+    onUpdatePromptActors,
+    onUpdatePromptProps,
+    onUpdatePromptCostumes,
     selectedShot,
     onUpdateShotTitle,
     onUpdateShotScriptExcerpt,
@@ -3049,7 +2989,7 @@ function Inspector(props: {
     Array<{ value: string; label: React.ReactNode; searchLabel: string; disabled?: boolean }>
   >([])
   const [shotLinkedAssets, setShotLinkedAssets] = useState<
-    Array<{ type: string; id: string; name?: string; thumbnail?: string; image_id?: number | null; file_id?: string | null }>
+    Array<{ type: string; id: string; name?: string; thumbnail?: string; image_id?: number | null }>
   >([])
   const [shotAssetsOverview, setShotAssetsOverview] = useState<ShotAssetsOverviewRead | null>(null)
   const shotAssetsOverviewRequestSeqRef = useRef(0)
@@ -3077,10 +3017,6 @@ function Inspector(props: {
   const [linkCostumeOpen, setLinkCostumeOpen] = useState(false)
   const [linkCostumeLoading, setLinkCostumeLoading] = useState(false)
   const [linkCostumeSelectedIds, setLinkCostumeSelectedIds] = useState<string[]>([])
-  const [activeReferenceFrameType, setActiveReferenceFrameType] = useState<PromptFrameType>('key')
-  const [frameReferenceOverrides, setFrameReferenceOverrides] = useState<
-    Partial<Record<PromptFrameType, Array<{ type: string; id: string; name: string; file_id: string }>>>
-  >({})
   const [projectCostumeOptions, setProjectCostumeOptions] = useState<Array<{ value: string; label: React.ReactNode; searchLabel: string; disabled?: boolean }>>([])
   const [opsTitleDraft, setOpsTitleDraft] = useState('')
   const [opsNoteDraft, setOpsNoteDraft] = useState('')
@@ -3136,11 +3072,7 @@ function Inspector(props: {
           ratio,
         } as any,
       })
-      const envelope = res as any
-      if (typeof envelope?.code === 'number' && envelope.code >= 400) {
-        throw new Error(String(envelope.message || '视频提示词预览失败'))
-      }
-      const data = envelope?.data ?? null
+      const data = (res as any)?.data ?? null
       return {
         prompt: typeof data?.prompt === 'string' ? data.prompt : '',
         images: Array.isArray(data?.images) ? (data.images as string[]).filter(Boolean) : [],
@@ -3164,10 +3096,6 @@ function Inspector(props: {
           ratio,
         } as any,
       })
-      const envelope = created as any
-      if (typeof envelope?.code === 'number' && envelope.code >= 400) {
-        throw new Error(String(envelope.message || '视频生成任务创建失败'))
-      }
       return {
         taskId: created.data?.task_id ?? null,
       }
@@ -3344,7 +3272,7 @@ function Inspector(props: {
         : null,
     onNavigate: () => undefined,
   })
-  const showAvTab = true
+  const showAvTab = false
   const showGenRefParams = false
   const showGenRefVersions = false
 
@@ -3519,6 +3447,20 @@ function Inspector(props: {
 
   const sceneIds = useMemo(() => Array.from(new Set(sceneLinks.map((x) => x.scene_id).filter(Boolean))), [sceneLinks])
   const characterIds = useMemo(() => Array.from(new Set(shotCharacterLinks.map((x) => x.character_id).filter(Boolean))), [shotCharacterLinks])
+
+  const linkedCharacterIds = useMemo(() => characterIds, [characterIds])
+  const linkedSceneId = useMemo(() => {
+    if (!selectedShot?.id) return null
+    return sceneLinks.find((l) => (l.shot_id ?? null) === selectedShot.id)?.scene_id ?? shotDetail?.scene_id ?? null
+  }, [sceneLinks, selectedShot?.id, shotDetail?.scene_id])
+  const linkedPropIds = useMemo(() => {
+    if (!selectedShot?.id) return []
+    return Array.from(new Set(propLinks.filter((l) => (l.shot_id ?? null) === selectedShot.id).map((l) => l.prop_id).filter(Boolean))) as string[]
+  }, [propLinks, selectedShot?.id])
+  const linkedCostumeIds = useMemo(() => {
+    if (!selectedShot?.id) return []
+    return Array.from(new Set(costumeLinks.filter((l) => (l.shot_id ?? null) === selectedShot.id).map((l) => l.costume_id).filter(Boolean))) as string[]
+  }, [costumeLinks, selectedShot?.id])
 
   useEffect(() => {
     if (!selectedShot?.id) {
@@ -3835,10 +3777,6 @@ function Inspector(props: {
     return map
   }, [extractFileIdFromThumbnail, shotLinkedAssets])
 
-  const isSystemFaceDetailRef = useCallback((fileId?: string | null) => {
-    return String(fileId ?? '').trim().endsWith('#face-detail')
-  }, [])
-
   const deriveKeyframePromptPreview = useCallback(
     async ({
       base,
@@ -3851,7 +3789,7 @@ function Inspector(props: {
         throw new Error('shot is required')
       }
       const basePrompt = (base.prompt || '').trim()
-      const refFileIds = (context.refFileIds || []).filter(Boolean).filter((fid) => !isSystemFaceDetailRef(fid))
+      const refFileIds = (context.refFileIds || []).filter(Boolean)
       if (!basePrompt) {
         return {
           basePrompt: '',
@@ -3865,35 +3803,9 @@ function Inspector(props: {
         }
       }
 
-      const normalizeFrameReferenceItem = (item: any) => {
-        const type = String(item?.type ?? '')
-        const id = String(item?.id ?? '')
-        if (!type || !id) return null
-        const current = shotLinkedAssets.find((candidate) => candidate.type === type && candidate.id === id)
-        const currentFileId =
-          (typeof current?.file_id === 'string' && current.file_id.trim() ? current.file_id.trim() : null) ??
-          extractFileIdFromThumbnail(current?.thumbnail ?? null)
-        const fileId = currentFileId ?? String(item?.file_id ?? '').trim()
-        if (!fileId) return null
-        return {
-          type,
-          id,
-          name: String(current?.name ?? item?.name ?? id),
-          file_id: fileId,
-        }
-      }
-      const overriddenFrameReferences = frameReferenceOverrides[base.frameType]
-      const slot = frameImages.find((item) => item.frame_type === base.frameType)
-      const persistedFrameReferences = (slot as any)?.reference_assets
-      const currentFrameAssets = (
-        overriddenFrameReferences ??
-        (Array.isArray(persistedFrameReferences) ? persistedFrameReferences : [])
-      )
-        .map(normalizeFrameReferenceItem)
-        .filter(Boolean) as Array<{ type: string; id: string; name: string; file_id: string }>
       const imagesPayload = refFileIds
         .map((fid) => {
-          const match = currentFrameAssets.find((x) => x.file_id === fid) ??
+          const match =
             shotLinkedAssets.find((x) => extractFileIdFromThumbnail(x.thumbnail ?? null) === fid) ??
             shotLinkedAssets.find((x) => (x as any)?.file_id === fid)
           return match
@@ -3949,14 +3861,7 @@ function Inspector(props: {
         mappings: Array.isArray(d?.mappings) ? (d.mappings as ShotFramePromptMappingRead[]) : [],
       }
     },
-    [
-      extractFileIdFromThumbnail,
-      frameImages,
-      frameReferenceOverrides,
-      isSystemFaceDetailRef,
-      selectedShot?.id,
-      shotLinkedAssets,
-    ],
+    [extractFileIdFromThumbnail, selectedShot?.id, shotLinkedAssets],
   )
 
   const keyframePromptDraft = useGenerationDraft<
@@ -3968,17 +3873,29 @@ function Inspector(props: {
     initialBase: { frameType: 'key', prompt: '' },
     initialContext: { refFileIds: [] },
     derive: deriveKeyframePromptPreview,
-    submit: async ({ base, context }) => {
+    submit: async ({ base, context, derived }) => {
       if (!selectedShot?.id) {
         throw new Error('shot is required')
       }
-      const currentFrameAssets = getFrameReferenceAssets(base.frameType)
-      const order = (context.refFileIds || []).filter((fid) => !isSystemFaceDetailRef(fid))
-      const resolvedItems = order.length > 0
-        ? order
-          .map((fid) => currentFrameAssets.find((item) => item.file_id === fid))
-          .filter(Boolean) as Array<{ type: string; id: string; name: string; file_id: string }>
-        : currentFrameAssets
+      const resolvedItems =
+        derived.mappings.length > 0
+          ? derived.mappings.map((mapping) => ({
+              type: mapping.type,
+              id: mapping.id,
+              name: mapping.name,
+              file_id: mapping.file_id,
+            }))
+          : (context.refFileIds || []).map((fid) => {
+              const match =
+                shotLinkedAssets.find((x) => extractFileIdFromThumbnail(x.thumbnail ?? null) === fid) ??
+                shotLinkedAssets.find((x) => (x as any)?.file_id === fid)
+              return {
+                type: (match?.type as any) ?? 'character',
+                id: match?.id ?? fid,
+                name: match?.name ?? match?.id ?? fid,
+                file_id: fid,
+              }
+            })
 
       const ratio = resolveVideoRatioForRequest()
       if (!ratio) {
@@ -4020,9 +3937,7 @@ function Inspector(props: {
       if (!selectedShot?.id) return
       const frameType = opts?.frameType ?? keyframePromptPreviewFrameType
       const basePrompt = (typeof opts?.prompt === 'string' ? opts.prompt : keyframePromptPreviewDraft || '').trim()
-      const refFileIds = (opts?.refFileIds ?? keyframePromptPreviewRefFileIds ?? [])
-        .filter(Boolean)
-        .filter((fid) => !isSystemFaceDetailRef(fid))
+      const refFileIds = (opts?.refFileIds ?? keyframePromptPreviewRefFileIds ?? []).filter(Boolean)
       const nextBase = { frameType, prompt: basePrompt }
       const nextContext = { refFileIds }
       keyframePromptDraft.hydrate({
@@ -4042,7 +3957,7 @@ function Inspector(props: {
         if (derived?.images?.length) {
           keyframePromptDraft.hydrate({
             base: nextBase,
-            context: nextContext,
+            context: { refFileIds: derived.images },
             derived: {
               ...derived,
               images: derived.images,
@@ -4064,132 +3979,54 @@ function Inspector(props: {
       keyframePromptPreviewDraft,
       keyframePromptPreviewFrameType,
       keyframePromptPreviewRefFileIds,
-      isSystemFaceDetailRef,
       selectedShot?.id,
     ],
   )
 
-  useEffect(() => {
-    // 镜头切换时清空本地覆盖，随后以各帧已经持久化的独立参考资产为准。
-    setFrameReferenceOverrides({})
-  }, [selectedShot?.id])
+  const orderedLinkedCharacterIds = useMemo(() => {
+    return shotCharacterLinks
+      .slice()
+      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+      .map((x) => x.character_id)
+      .filter(Boolean)
+      .map((x) => String(x))
+  }, [shotCharacterLinks])
 
-  const getFrameReferenceAssets = useCallback(
-    (frameType: PromptFrameType) => {
-      const normalizeItem = (item: any) => {
-        const type = String(item?.type ?? '')
-        const id = String(item?.id ?? '')
-        if (!type || !id) return null
-        const current = shotLinkedAssets.find((candidate) => candidate.type === type && candidate.id === id)
-        const currentFileId =
-          (typeof current?.file_id === 'string' && current.file_id.trim() ? current.file_id.trim() : null) ??
-          extractFileIdFromThumbnail(current?.thumbnail ?? null)
-        const fileId = currentFileId ?? String(item?.file_id ?? '').trim()
-        if (!fileId) return null
-        return {
-          type,
-          id,
-          name: String(current?.name ?? item?.name ?? id),
-          file_id: fileId,
-        }
-      }
-      const overridden = frameReferenceOverrides[frameType]
-      if (overridden) return overridden.map(normalizeItem).filter(Boolean) as Array<{ type: string; id: string; name: string; file_id: string }>
-      const slot = frameImages.find((item) => item.frame_type === frameType)
-      const persisted = (slot as any)?.reference_assets
-      if (Array.isArray(persisted)) {
-        return persisted
-          .map(normalizeItem)
-          .filter(Boolean) as Array<{ type: string; id: string; name: string; file_id: string }>
-      }
-      // 未配置就是空，不从镜头级关联自动继承，保证三种帧真正相互独立。
-      return []
-    },
-    [extractFileIdFromThumbnail, frameImages, frameReferenceOverrides, shotLinkedAssets],
-  )
-
-  const saveFrameReferenceType = useCallback(
-    async (frameType: PromptFrameType, assetType: string, selectedIds: string[]) => {
-      let slot = frameImages.find((item) => item.frame_type === frameType)
-      const retained = getFrameReferenceAssets(frameType).filter((item) => item.type !== assetType)
-      const selected = (
-        await Promise.all(
-          selectedIds.map(async (id) => {
-          let item = shotLinkedAssets.find((candidate) => candidate.type === assetType && candidate.id === id)
-          if (!item) {
-            try {
-              const response = await StudioEntitiesApi.get(assetType as any, id)
-              const entity = (response.data ?? null) as any
-              item = {
-                type: assetType,
-                id,
-                name: String(entity?.name ?? id),
-                thumbnail: typeof entity?.thumbnail === 'string' ? entity.thumbnail : '',
-                file_id: typeof entity?.file_id === 'string' ? entity.file_id : null,
-              }
-            } catch {
-              return null
-            }
-          }
-          const fileId =
-            (typeof item.file_id === 'string' && item.file_id.trim() ? item.file_id.trim() : null) ??
-            extractFileIdFromThumbnail(item.thumbnail ?? null)
-          return fileId
-            ? {
-                type: assetType,
-                id,
-                name: String(item.name ?? id),
-                file_id: fileId,
-              }
-            : null
-          }),
-        )
-      ).filter(Boolean) as Array<{ type: string; id: string; name: string; file_id: string }>
-      const next = [...retained, ...selected]
-      setFrameReferenceOverrides((prev) => ({ ...prev, [frameType]: next }))
-      if (!slot) {
-        if (!selectedShot?.id) return
-        const created = await StudioShotFrameImagesService.createShotFrameImageApiV1StudioShotFrameImagesPost({
-          requestBody: {
-            shot_detail_id: selectedShot.id,
-            frame_type: frameType,
-            file_id: null,
-            width: null,
-            height: null,
-            format: 'png',
-            reference_assets: next,
-          } as any,
-        })
-        slot = created.data ?? undefined
-        await onRefreshShotFrameImages?.()
-        return
-      }
-      await StudioShotFrameImagesService.updateShotFrameImageApiV1StudioShotFrameImagesImageIdPatch({
-        imageId: slot.id,
-        requestBody: { reference_assets: next } as any,
-      })
-    },
-    [
-      extractFileIdFromThumbnail,
-      frameImages,
-      getFrameReferenceAssets,
-      onRefreshShotFrameImages,
-      selectedShot?.id,
-      shotLinkedAssets,
-    ],
-  )
-
-  const frameReferenceFileIds = useCallback(
-    (frameType: PromptFrameType) => getFrameReferenceAssets(frameType).map((item) => item.file_id).filter(Boolean),
-    [getFrameReferenceAssets],
-  )
+  const autoKeyframeRefFileIds = useMemo(() => {
+    const out: string[] = []
+    const push = (fid: string | null) => {
+      if (!fid) return
+      if (out.includes(fid)) return
+      out.push(fid)
+    }
+    // 角色（按 index 顺序）
+    orderedLinkedCharacterIds.forEach((cid) =>
+      push(extractFileIdFromThumbnail(linkedAssetThumbByKey.get(`character:${cid}`) ?? null)),
+    )
+    // 场景（单个）
+    if (linkedSceneId) push(extractFileIdFromThumbnail(linkedAssetThumbByKey.get(`scene:${linkedSceneId}`) ?? null))
+    // 道具
+    linkedPropIds.forEach((pid) => push(extractFileIdFromThumbnail(linkedAssetThumbByKey.get(`prop:${pid}`) ?? null)))
+    // 服装
+    linkedCostumeIds.forEach((cid) =>
+      push(extractFileIdFromThumbnail(linkedAssetThumbByKey.get(`costume:${cid}`) ?? null)),
+    )
+    return out
+  }, [
+    extractFileIdFromThumbnail,
+    linkedCostumeIds,
+    linkedPropIds,
+    linkedSceneId,
+    linkedAssetThumbByKey,
+    orderedLinkedCharacterIds,
+  ])
 
   const moveKeyframePromptRefFile = useCallback((fromIndex: number, toIndex: number) => {
-    const current = keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
+    const current = keyframePromptPreviewRefFileIds
     if (fromIndex < 0 || toIndex < 0 || fromIndex >= current.length || toIndex >= current.length) return
     const next = reorder(current, fromIndex, toIndex)
     keyframePromptDraft.setContext({ refFileIds: next })
-  }, [isSystemFaceDetailRef, keyframePromptDraft, keyframePromptPreviewRefFileIds])
+  }, [keyframePromptDraft, keyframePromptPreviewRefFileIds])
 
   const loadProjectRoleOptions = async () => {
     if (!projectId) {
@@ -4289,11 +4126,11 @@ function Inspector(props: {
         setProjectSceneOptions(details.map((d) => ({ value: d.id, searchLabel: d.name, label: makeLabel(d) })))
       } else if (kind === 'prop') {
         setProjectPropOptions(
-          details.map((d) => ({ value: d.id, searchLabel: d.name, label: makeLabel(d) })),
+          details.map((d) => ({ value: d.id, searchLabel: d.name, label: makeLabel(d), disabled: linkedPropIds.includes(d.id) })),
         )
       } else {
         setProjectCostumeOptions(
-          details.map((d) => ({ value: d.id, searchLabel: d.name, label: makeLabel(d) })),
+          details.map((d) => ({ value: d.id, searchLabel: d.name, label: makeLabel(d), disabled: linkedCostumeIds.includes(d.id) })),
         )
       }
     } finally {
@@ -4440,36 +4277,31 @@ function Inspector(props: {
     if (kinds.has('last')) opts.push({ value: 'last', label: '尾帧' })
     if (kinds.has('first') && kinds.has('last')) opts.push({ value: 'first_last', label: '首尾帧' })
     if (kinds.has('key')) opts.push({ value: 'key', label: '关键帧' })
-    if (kinds.has('first') && kinds.has('last') && kinds.has('key')) opts.push({ value: 'first_last_key', label: '首尾帧+关键帧' })
     return opts
   }, [frameImages])
 
   useEffect(() => {
     const allowed = new Set(refFrameTypeOptions.map((x) => x.value))
-    setRefImageType((prev) => {
-      if (prev && allowed.has(prev)) return prev
-      if (allowed.has('first')) return 'first'
-      if (allowed.has('last')) return 'last'
-      if (allowed.has('key')) return 'key'
-      return undefined
-    })
+    setRefImageType((prev) => (prev && allowed.has(prev) ? prev : undefined))
   }, [refFrameTypeOptions])
 
   const buildVideoRefSelection = () => {
-    return buildVideoReferenceSelection(frameImages, refImageType)
-  }
+    const first = frameImages.find((x) => x.frame_type === 'first')?.file_id ?? null
+    const last = frameImages.find((x) => x.frame_type === 'last')?.file_id ?? null
+    const key = frameImages.find((x) => x.frame_type === 'key')?.file_id ?? null
 
-  useEffect(() => {
-    const nextContext = buildVideoReferenceSelection(frameImages, refImageType)
-    videoPromptDraft.hydrate({
-      base: { prompt: videoPromptDraft.base.prompt },
-      context: nextContext,
-    })
-  }, [
-    refImageType,
-    frameImages.map((item) => `${item.frame_type}:${item.file_id ?? ''}`).join('|'),
-    selectedShot?.id,
-  ])
+    const s = refImageType
+    if (s === 'first_last') {
+      return {
+        referenceMode: 'first_last' as const,
+        images: [first, last].filter((x): x is string => Boolean(x)),
+      }
+    }
+    if (s === 'key') return { referenceMode: 'key' as const, images: key ? [key] : [] }
+    if (s === 'first') return { referenceMode: 'first' as const, images: first ? [first] : [] }
+    if (s === 'last') return { referenceMode: 'last' as const, images: last ? [last] : [] }
+    return { referenceMode: 'text_only' as const, images: [] }
+  }
 
   const openVideoPromptPreview = async () => {
     if (!selectedShot?.id) {
@@ -4500,8 +4332,8 @@ function Inspector(props: {
           derived,
         })
       }
-    } catch (error) {
-      message.error(defaultTaskActionErrorMessage(error, '获取视频提示词预览失败'))
+    } catch {
+      message.error('获取视频提示词预览失败')
     } finally {
       setVideoPromptPreviewLoading(false)
     }
@@ -4540,8 +4372,8 @@ function Inspector(props: {
       })
       setVideoSettledTask(null)
       setVideoPromptPreviewOpen(false)
-    } catch (error) {
-      message.error(defaultTaskActionErrorMessage(error, '发起视频生成失败'))
+    } catch {
+      message.error('发起视频生成失败')
     } finally {
       setVideoPromptPreviewSubmitting(false)
     }
@@ -4653,74 +4485,6 @@ function Inspector(props: {
     updateCardState(frameType, { thumbs })
   }
 
-  useEffect(() => {
-    if (!frameImageTask?.taskId || !isActiveTaskStatus(frameImageTask.status)) return
-    let cancelled = false
-    let timer: number | null = null
-
-    const poll = async () => {
-      try {
-        const statusRes = await FilmService.getTaskStatusApiV1FilmTasksTaskIdStatusGet({ taskId: frameImageTask.taskId })
-        if (cancelled) return
-        const data = statusRes.data
-        if (!data) {
-          timer = window.setTimeout(() => {
-            void poll()
-          }, 2000)
-          return
-        }
-
-        const nextTask = toRelationTaskStateFromStatusRead(data)
-        const frameType = (Object.keys(keyframeCards) as PromptFrameType[]).find(
-          (ft) => keyframeCards[ft].taskId === frameImageTask.taskId,
-        )
-        if (frameType) {
-          updateCardState(frameType, {
-            taskStatus: nextTask.status,
-            loading: isActiveTaskStatus(nextTask.status),
-          })
-        }
-
-        if (isActiveTaskStatus(nextTask.status)) {
-          setFrameImageTask(nextTask)
-          timer = window.setTimeout(() => {
-            void poll()
-          }, 2000)
-          return
-        }
-
-        setFrameImageTask(null)
-        setFrameImageSettledTask(nextTask)
-        if (frameType) {
-          updateCardState(frameType, {
-            taskStatus: nextTask.status,
-            loading: false,
-          })
-          if (nextTask.status === 'succeeded') {
-            await onRefreshShotFrameImages?.()
-            if (!cancelled) {
-              await loadCardThumbs(frameType, null, 3)
-            }
-          }
-        }
-      } catch {
-        if (!cancelled) {
-          timer = window.setTimeout(() => {
-            void poll()
-          }, 2000)
-        }
-      }
-    }
-
-    timer = window.setTimeout(() => {
-      void poll()
-    }, 1000)
-    return () => {
-      cancelled = true
-      if (timer !== null) window.clearTimeout(timer)
-    }
-  }, [frameImageTask?.taskId, frameImageTask?.status, keyframeCards, onRefreshShotFrameImages])
-
   const generateKeyframeCard = async (frameType: PromptFrameType) => {
     if (!selectedShot?.id) {
       message.warning('请先选择一个分镜')
@@ -4734,10 +4498,9 @@ function Inspector(props: {
       setKeyframeDirectiveCollapsed(true)
       setKeyframePromptDecisionCollapsed(true)
       const basePrompt = getPromptFromDetailByType(frameType)
-      const selectedFrameRefFileIds = frameReferenceFileIds(frameType)
       keyframePromptDraft.hydrate({
         base: { frameType, prompt: basePrompt },
-        context: { refFileIds: selectedFrameRefFileIds },
+        context: { refFileIds: autoKeyframeRefFileIds },
         state: basePrompt.trim() ? 'draft_changed' : 'idle',
       })
       setKeyframePromptDebugContext(null)
@@ -4747,12 +4510,11 @@ function Inspector(props: {
         void renderShotPromptToTextarea({
           frameType,
           prompt: basePrompt,
-          refFileIds: selectedFrameRefFileIds,
+          refFileIds: autoKeyframeRefFileIds,
           showPreviewLoading: true,
         })
       } else {
         setKeyframePromptPreviewLoading(false)
-        void regenerateKeyframePrompt(frameType)
       }
     } catch {
       message.error('获取提示词失败')
@@ -4762,27 +4524,12 @@ function Inspector(props: {
     }
   }
 
-  const regenerateKeyframePrompt = async (targetFrameType?: PromptFrameType) => {
+  const regenerateKeyframePrompt = async () => {
     if (!selectedShot?.id) {
       message.warning('请先选择一个分镜')
       return
     }
-    const frameType = targetFrameType ?? keyframePromptPreviewFrameType
-    const existingPrompt = getPromptFromDetailByType(frameType)
-    const existingRefFileIds =
-      targetFrameType
-        ? frameReferenceFileIds(frameType)
-        : keyframePromptPreviewRefFileIds.length > 0
-        ? keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
-        : frameReferenceFileIds(frameType)
-    // 重新生成基础提示词时，先清理上一次最终提示词同步错误。
-    // 否则基础提示词任务进行中时，最终提示词区域仍会残留旧的“同步失败”红条。
-    keyframePromptDraft.hydrate({
-      base: { frameType, prompt: existingPrompt },
-      context: { refFileIds: existingRefFileIds },
-      derived: null,
-      state: existingPrompt.trim() ? 'deriving' : 'idle',
-    })
+    const frameType = keyframePromptPreviewFrameType
     setKeyframePromptActionLoading(true)
     try {
       const created = await FilmService.createShotFramePromptTaskApiV1FilmTasksShotFramePromptsPost({
@@ -4833,7 +4580,6 @@ function Inspector(props: {
       }
 
       if (finalStatus !== 'succeeded') {
-        keyframePromptDraft.setState(existingPrompt.trim() ? 'draft_changed' : 'idle')
         if (finalStatus !== 'failed' && finalStatus !== 'cancelled') {
           message.warning('生成任务仍在执行中，请关注右下角任务中心')
         }
@@ -4879,12 +4625,7 @@ function Inspector(props: {
       await renderShotPromptToTextarea({
         frameType,
         prompt: generatedPrompt,
-        refFileIds:
-          targetFrameType
-            ? frameReferenceFileIds(frameType)
-            : keyframePromptPreviewRefFileIds.length > 0
-            ? keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
-            : frameReferenceFileIds(frameType),
+        refFileIds: keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds,
       })
       message.success('提示词已生成')
     } catch {
@@ -4895,14 +4636,20 @@ function Inspector(props: {
   }
 
   useEffect(() => {
+    // 弹窗打开时，若当前没有参考图，则自动填充为分镜关联实体的参考图
+    if (!keyframePromptPreviewOpen) return
+    if (keyframePromptPreviewRefFileIds.length > 0) return
+    if (autoKeyframeRefFileIds.length === 0) return
+    keyframePromptDraft.setContext({ refFileIds: autoKeyframeRefFileIds })
+  }, [autoKeyframeRefFileIds, keyframePromptPreviewOpen, keyframePromptPreviewRefFileIds.length])
+
+  useEffect(() => {
     if (!keyframePromptPreviewOpen) return
     if (mapGenerationDraftStateToRenderState(keyframePromptRenderState) !== 'stale') return
     const basePrompt = (keyframePromptPreviewDraft || '').trim()
     if (!basePrompt) return
     const refFileIds =
-      keyframePromptPreviewRefFileIds.length > 0
-        ? keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
-        : frameReferenceFileIds(keyframePromptPreviewFrameType)
+      keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds
     const timer = window.setTimeout(() => {
       void renderShotPromptToTextarea({
         frameType: keyframePromptPreviewFrameType,
@@ -4914,13 +4661,12 @@ function Inspector(props: {
       window.clearTimeout(timer)
     }
   }, [
-    frameReferenceFileIds,
+    autoKeyframeRefFileIds,
     keyframePromptPreviewDraft,
     keyframePromptPreviewFrameType,
     keyframePromptPreviewOpen,
     keyframePromptPreviewRefFileIds,
     keyframePromptRenderState,
-    isSystemFaceDetailRef,
     renderShotPromptToTextarea,
   ])
 
@@ -4939,13 +4685,9 @@ function Inspector(props: {
     setKeyframePromptActionLoading(true)
     updateCardState(frameType, { loading: true, taskStatus: 'pending', taskId: null })
     try {
-      const refFileIds =
-        keyframePromptPreviewRefFileIds.length > 0
-          ? keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
-          : frameReferenceFileIds(frameType)
-      const submitContext = { refFileIds }
-      keyframePromptDraft.replaceContext(submitContext)
-      const submitted = await keyframePromptDraft.submitNow({ context: submitContext })
+      const refFileIds = keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds
+      keyframePromptDraft.replaceContext({ refFileIds })
+      const submitted = await keyframePromptDraft.submitNow()
       const taskId = submitted?.taskId
       if (!taskId) {
         message.error('生成任务创建失败：缺少任务 ID')
@@ -4960,9 +4702,41 @@ function Inspector(props: {
         cancelRequested: false,
       })
       setFrameImageSettledTask(null)
-      // 任务已提交，立即关闭弹窗并释放按钮 loading；任务中心继续追踪进度。
+      // 任务已提交，立即关闭弹窗，任务中心会继续追踪进度
       setKeyframePromptPreviewOpen(false)
-      message.success('已提交生成任务，请在右下角任务中心查看进度')
+
+      let finalTaskState: RelationTaskState | null = null
+      for (let i = 0; i < 30; i += 1) {
+        await sleep(2000)
+        const statusRes = await FilmService.getTaskStatusApiV1FilmTasksTaskIdStatusGet({ taskId })
+        const status = statusRes.data?.status
+        if (!status) continue
+        if (statusRes.data) {
+          finalTaskState = toRelationTaskStateFromStatusRead(statusRes.data)
+          setFrameImageTask(finalTaskState)
+        }
+        updateCardState(frameType, { taskStatus: status })
+        if (status === 'succeeded' || status === 'failed' || status === 'cancelled') break
+      }
+      if (
+        finalTaskState &&
+        (finalTaskState.status === 'succeeded' ||
+          finalTaskState.status === 'failed' ||
+          finalTaskState.status === 'cancelled')
+      ) {
+        setFrameImageTask(null)
+        setFrameImageSettledTask(finalTaskState)
+        if (finalTaskState.status === 'succeeded') {
+          await onRefreshShotFrameImages?.()
+          const latestSlotId = await getLatestFrameSlotId(frameType)
+          await loadCardThumbs(frameType, latestSlotId, 5)
+        }
+      } else {
+        // 超时退出轮询，清除本地任务状态，任务中心会继续追踪
+        setFrameImageTask(null)
+        setFrameImageSettledTask(null)
+        message.warning('生成任务仍在执行中，请关注右下角任务中心')
+      }
     } catch {
       updateCardState(frameType, { taskStatus: 'failed' })
       message.error(`${frameLabel[frameType]}生成失败`)
@@ -5304,55 +5078,6 @@ function Inspector(props: {
                           <div className="text-xs text-gray-400">当前镜头还没有对白。</div>
                         )}
                       </div>
-
-                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <div>
-                            <div className="text-gray-700 text-sm">对白配音</div>
-                            <div className="text-gray-400 text-xs">
-                              根据已确认对白生成可试听音频；生成有声视频前需要先有这里的音频片段。
-                            </div>
-                          </div>
-                          <Button
-                            size="small"
-                            type="primary"
-                            icon={<CustomerServiceOutlined />}
-                            loading={ttsGenerating}
-                            onClick={onGenerateShotTts}
-                          >
-                            生成对白配音
-                          </Button>
-                        </div>
-                        {shotAudioClips.length > 0 ? (
-                          <div className="space-y-2">
-                            {shotAudioClips.map((clip) => {
-                              const audioUrl = buildFileDownloadUrl(clip.file_id) ?? ''
-                              return (
-                                <div key={clip.id} className="rounded border border-slate-100 bg-slate-50 px-2 py-2">
-                                  <div className="flex items-center justify-between gap-2 mb-1">
-                                    <div className="min-w-0">
-                                      <div className="text-xs text-gray-700 truncate">{clip.label || clip.file?.name || '音频片段'}</div>
-                                      <div className="text-[11px] text-gray-400">
-                                        {clip.clip_type} · {(clip.start_ms / 1000).toFixed(1)}s - {(clip.end_ms / 1000).toFixed(1)}s
-                                      </div>
-                                    </div>
-                                    {audioUrl ? (
-                                      <Button size="small" type="link" href={audioUrl} target="_blank">
-                                        打开
-                                      </Button>
-                                    ) : null}
-                                  </div>
-                                  {audioUrl ? <audio className="w-full" controls src={audioUrl} /> : null}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        ) : (
-                          <div className="text-xs text-gray-400">
-                            还没有配音音频。若按钮不可点，说明当前镜头还没有已确认对白。
-                          </div>
-                        )}
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -5398,11 +5123,6 @@ function Inspector(props: {
                   {(['first', 'key', 'last'] as PromptFrameType[]).map((ft) => {
                     const st = keyframeCards[ft]
                     const slot = frameImages.find((x) => x.frame_type === ft)
-                    const frameRefs = getFrameReferenceAssets(ft)
-                    const frameCharacterIds = frameRefs.filter((item) => item.type === 'character').map((item) => item.id)
-                    const frameSceneId = frameRefs.find((item) => item.type === 'scene')?.id ?? null
-                    const framePropIds = frameRefs.filter((item) => item.type === 'prop').map((item) => item.id)
-                    const frameCostumeIds = frameRefs.filter((item) => item.type === 'costume').map((item) => item.id)
                     const inUseFileId = slot?.file_id ? String(slot.file_id) : ''
                     const statusText =
                       st.taskStatus === 'pending'
@@ -5456,8 +5176,7 @@ function Inspector(props: {
                                   className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-500 shrink-0 hover:border-gray-400 hover:text-gray-700"
                                   disabled={promptAssetsUpdating || linkRoleLoading}
                                   onClick={() => {
-                                    setActiveReferenceFrameType(ft)
-                                    setLinkRoleSelectedIds([...frameCharacterIds])
+                                    setLinkRoleSelectedIds([...linkedCharacterIds])
                                     setLinkRoleOpen(true)
                                     void loadProjectRoleOptions()
                                   }}
@@ -5465,10 +5184,10 @@ function Inspector(props: {
                                 >
                                   <PlusOutlined />
                                 </button>
-                                {frameCharacterIds.length === 0 ? (
+                                {linkedCharacterIds.length === 0 ? (
                                   <div className="text-xs text-gray-400">暂无关联角色</div>
                                 ) : (
-                                  frameCharacterIds.map((cid) => {
+                                  linkedCharacterIds.map((cid) => {
                                     const thumb = linkedAssetThumbByKey.get(`character:${cid}`)
                                     const name = characterNameMap[cid] ?? cid
                                     return thumb ? (
@@ -5500,7 +5219,6 @@ function Inspector(props: {
                                   className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-500 shrink-0 hover:border-gray-400 hover:text-gray-700"
                                   disabled={promptAssetsUpdating || linkSceneLoading}
                                   onClick={() => {
-                                    setActiveReferenceFrameType(ft)
                                     setLinkSceneOpen(true)
                                     void loadProjectAssetOptions('scene')
                                   }}
@@ -5508,18 +5226,18 @@ function Inspector(props: {
                                 >
                                   <PlusOutlined />
                                 </button>
-                                {frameSceneId ? (
-                                  linkedAssetThumbByKey.get(`scene:${frameSceneId}`) ? (
+                                {linkedSceneId ? (
+                                  linkedAssetThumbByKey.get(`scene:${linkedSceneId}`) ? (
                                     <Image
-                                      key={frameSceneId}
+                                      key={linkedSceneId}
                                       width={48}
                                       height={48}
                                       style={{ objectFit: 'cover', borderRadius: 8 }}
-                                      src={resolveAssetUrl(linkedAssetThumbByKey.get(`scene:${frameSceneId}`) ?? '')}
-                                      preview={{ src: resolveAssetUrl(linkedAssetThumbByKey.get(`scene:${frameSceneId}`) ?? '') }}
+                                      src={resolveAssetUrl(linkedAssetThumbByKey.get(`scene:${linkedSceneId}`) ?? '')}
+                                      preview={{ src: resolveAssetUrl(linkedAssetThumbByKey.get(`scene:${linkedSceneId}`) ?? '') }}
                                     />
                                   ) : (
-                                    <div className="text-xs text-gray-400">已关联场景：{sceneNameMap[frameSceneId] ?? frameSceneId}</div>
+                                    <div className="text-xs text-gray-400">已关联场景：{sceneNameMap[linkedSceneId] ?? linkedSceneId}</div>
                                   )
                                 ) : (
                                   <div className="text-xs text-gray-400">暂无关联场景</div>
@@ -5533,8 +5251,7 @@ function Inspector(props: {
                                   className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-500 shrink-0 hover:border-gray-400 hover:text-gray-700"
                                   disabled={promptAssetsUpdating || linkPropLoading}
                                   onClick={() => {
-                                    setActiveReferenceFrameType(ft)
-                                    setLinkPropSelectedIds([...framePropIds])
+                                    setLinkPropSelectedIds([])
                                     setLinkPropOpen(true)
                                     void loadProjectAssetOptions('prop')
                                   }}
@@ -5542,10 +5259,10 @@ function Inspector(props: {
                                 >
                                   <PlusOutlined />
                                 </button>
-                                {framePropIds.length === 0 ? (
+                                {linkedPropIds.length === 0 ? (
                                   <div className="text-xs text-gray-400">暂无关联道具</div>
                                 ) : (
-                                  framePropIds.map((pid) =>
+                                  linkedPropIds.map((pid) =>
                                     linkedAssetThumbByKey.get(`prop:${pid}`) ? (
                                       <Image
                                         key={pid}
@@ -5571,8 +5288,7 @@ function Inspector(props: {
                                   className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-500 shrink-0 hover:border-gray-400 hover:text-gray-700"
                                   disabled={promptAssetsUpdating || linkCostumeLoading}
                                   onClick={() => {
-                                    setActiveReferenceFrameType(ft)
-                                    setLinkCostumeSelectedIds([...frameCostumeIds])
+                                    setLinkCostumeSelectedIds([])
                                     setLinkCostumeOpen(true)
                                     void loadProjectAssetOptions('costume')
                                   }}
@@ -5580,10 +5296,10 @@ function Inspector(props: {
                                 >
                                   <PlusOutlined />
                                 </button>
-                                {frameCostumeIds.length === 0 ? (
+                                {linkedCostumeIds.length === 0 ? (
                                   <div className="text-xs text-gray-400">暂无关联服装</div>
                                 ) : (
-                                  frameCostumeIds.map((cid) =>
+                                  linkedCostumeIds.map((cid) =>
                                     linkedAssetThumbByKey.get(`costume:${cid}`) ? (
                                       <Image
                                         key={cid}
@@ -5642,34 +5358,22 @@ function Inspector(props: {
 
                           <Modal
                             title="编辑关联角色"
-                            open={linkRoleOpen && activeReferenceFrameType === ft}
+                            open={linkRoleOpen}
                             onCancel={() => setLinkRoleOpen(false)}
                             destroyOnClose
                             width={560}
-                            footer={null}
+                            onOk={() => {
+                              void (async () => {
+                                await onUpdatePromptActors(linkRoleSelectedIds)
+                                setLinkRoleOpen(false)
+                              })()
+                            }}
+                            okText="保存"
+                            cancelText="取消"
+                            confirmLoading={promptAssetsUpdating}
                           >
                             <div className="space-y-2">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-xs text-gray-500">选中 = 关联；取消选中 = 移除关联</div>
-                                <Space size={8}>
-                                  <Button size="small" onClick={() => setLinkRoleOpen(false)}>
-                                    取消
-                                  </Button>
-                                  <Button
-                                    size="small"
-                                    type="primary"
-                                    loading={promptAssetsUpdating}
-                                    onClick={() => {
-                                      void (async () => {
-                                        await saveFrameReferenceType(activeReferenceFrameType, 'character', linkRoleSelectedIds)
-                                        setLinkRoleOpen(false)
-                                      })()
-                                    }}
-                                  >
-                                    保存
-                                  </Button>
-                                </Space>
-                              </div>
+                              <div className="text-xs text-gray-500">选中 = 关联；取消选中 = 移除关联</div>
                               <Select
                                 mode="multiple"
                                 className="w-full"
@@ -5692,7 +5396,7 @@ function Inspector(props: {
 
                           <Modal
                             title="关联场景"
-                            open={linkSceneOpen && activeReferenceFrameType === ft}
+                            open={linkSceneOpen}
                             onCancel={() => setLinkSceneOpen(false)}
                             footer={null}
                             destroyOnClose
@@ -5703,10 +5407,7 @@ function Inspector(props: {
                               <Select
                                 className="w-full"
                                 placeholder="选择要关联到当前分镜的场景"
-                                value={
-                                  getFrameReferenceAssets(activeReferenceFrameType).find((item) => item.type === 'scene')?.id ??
-                                  undefined
-                                }
+                                value={linkedSceneId ?? undefined}
                                 loading={linkSceneLoading}
                                 disabled={promptAssetsUpdating}
                                 options={projectSceneOptions}
@@ -5717,7 +5418,7 @@ function Inspector(props: {
                                 }
                                 onChange={(v: string) => {
                                   void (async () => {
-                                    await saveFrameReferenceType(activeReferenceFrameType, 'scene', v ? [v] : [])
+                                    await onUpdatePromptScene(v)
                                     setLinkSceneOpen(false)
                                   })()
                                 }}
@@ -5727,14 +5428,14 @@ function Inspector(props: {
 
                           <Modal
                             title="关联道具"
-                            open={linkPropOpen && activeReferenceFrameType === ft}
+                            open={linkPropOpen}
                             onCancel={() => setLinkPropOpen(false)}
                             footer={null}
                             destroyOnClose
                             width={560}
                           >
                             <div className="space-y-2">
-                              <div className="text-xs text-gray-500">只影响当前帧；其他帧的道具选择保持不变</div>
+                              <div className="text-xs text-gray-500">来源：当前项目道具（选择后立即保存；已关联的不可重复选择）</div>
                               <Select
                                 mode="multiple"
                                 className="w-full"
@@ -5749,11 +5450,13 @@ function Inspector(props: {
                                   String(option?.searchLabel ?? '').toLowerCase().includes(input.toLowerCase())
                                 }
                                 onChange={(vals: Array<string | number>) => {
-                                  const next = (vals ?? []).map((v) => String(v)).filter(Boolean)
-                                  setLinkPropSelectedIds(next)
+                                  const nextNew = (vals ?? []).map((v) => String(v)).filter(Boolean)
+                                  setLinkPropSelectedIds(nextNew)
+                                  const merged = Array.from(new Set([...linkedPropIds, ...nextNew]))
                                   void (async () => {
-                                    await saveFrameReferenceType(activeReferenceFrameType, 'prop', next)
+                                    await onUpdatePromptProps(merged)
                                     setLinkPropOpen(false)
+                                    setLinkPropSelectedIds([])
                                   })()
                                 }}
                               />
@@ -5762,14 +5465,14 @@ function Inspector(props: {
 
                           <Modal
                             title="关联服装"
-                            open={linkCostumeOpen && activeReferenceFrameType === ft}
+                            open={linkCostumeOpen}
                             onCancel={() => setLinkCostumeOpen(false)}
                             footer={null}
                             destroyOnClose
                             width={560}
                           >
                             <div className="space-y-2">
-                              <div className="text-xs text-gray-500">只影响当前帧；其他帧的服装选择保持不变</div>
+                              <div className="text-xs text-gray-500">来源：当前项目服装（选择后立即保存；已关联的不可重复选择）</div>
                               <Select
                                 mode="multiple"
                                 className="w-full"
@@ -5784,11 +5487,13 @@ function Inspector(props: {
                                   String(option?.searchLabel ?? '').toLowerCase().includes(input.toLowerCase())
                                 }
                                 onChange={(vals: Array<string | number>) => {
-                                  const next = (vals ?? []).map((v) => String(v)).filter(Boolean)
-                                  setLinkCostumeSelectedIds(next)
+                                  const nextNew = (vals ?? []).map((v) => String(v)).filter(Boolean)
+                                  setLinkCostumeSelectedIds(nextNew)
+                                  const merged = Array.from(new Set([...linkedCostumeIds, ...nextNew]))
                                   void (async () => {
-                                    await saveFrameReferenceType(activeReferenceFrameType, 'costume', next)
+                                    await onUpdatePromptCostumes(merged)
                                     setLinkCostumeOpen(false)
+                                    setLinkCostumeSelectedIds([])
                                   })()
                                 }}
                               />
@@ -5808,53 +5513,6 @@ function Inspector(props: {
                   <div>
                     <div className="cs-group">
                       <div className="cs-group-title">
-                        <CustomerServiceOutlined /> 对白配音
-                      </div>
-                      <div className="space-y-3">
-                        <div className="text-xs text-gray-500">
-                          根据当前镜头已确认对白生成可试听音频；如果按钮不可点，说明这个镜头还没有已确认对白。
-                        </div>
-                        <Button
-                          block
-                          type="primary"
-                          icon={<CustomerServiceOutlined />}
-                          loading={ttsGenerating}
-                          onClick={onGenerateShotTts}
-                        >
-                          生成对白配音
-                        </Button>
-                        {shotAudioClips.length > 0 ? (
-                          <div className="space-y-2">
-                            {shotAudioClips.map((clip) => {
-                              const audioUrl = buildFileDownloadUrl(clip.file_id) ?? ''
-                              return (
-                                <div key={clip.id} className="rounded border border-slate-100 bg-slate-50 px-2 py-2">
-                                  <div className="flex items-center justify-between gap-2 mb-1">
-                                    <div className="min-w-0">
-                                      <div className="text-xs text-gray-700 truncate">{clip.label || clip.file?.name || '音频片段'}</div>
-                                      <div className="text-[11px] text-gray-400">
-                                        {clip.clip_type} · {(clip.start_ms / 1000).toFixed(1)}s - {(clip.end_ms / 1000).toFixed(1)}s
-                                      </div>
-                                    </div>
-                                    {audioUrl ? (
-                                      <Button size="small" type="link" href={audioUrl} target="_blank">
-                                        打开
-                                      </Button>
-                                    ) : null}
-                                  </div>
-                                  {audioUrl ? <audio className="w-full" controls src={audioUrl} /> : null}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        ) : (
-                          <div className="text-xs text-gray-400">当前镜头还没有配音音频。</div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="cs-group">
-                      <div className="cs-group-title">
                         <CustomerServiceOutlined /> 配乐
                       </div>
                       <div className="space-y-3">
@@ -5869,18 +5527,9 @@ function Inspector(props: {
                         />
                         {audioMode === 'prompt' && <TextArea rows={3} placeholder="配乐提示词（支持多版本）…" />}
                         {audioMode === 'upload' && (
-                          <Upload
-                            accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.aiff,.aif"
-                            showUploadList={false}
-                            beforeUpload={(file) => {
-                              void onUploadShotAudio(file as File)
-                              return Upload.LIST_IGNORE
-                            }}
-                          >
-                            <Button block icon={<UploadOutlined />} loading={audioUploading}>
-                              上传音频
-                            </Button>
-                          </Upload>
+                          <Button block icon={<UploadOutlined />}>
+                            上传音频
+                          </Button>
                         )}
                       </div>
                     </div>
@@ -5974,22 +5623,11 @@ function Inspector(props: {
                       <ThunderboltOutlined /> 生成
                     </div>
                     <Space wrap>
-                      <Button icon={<FileTextOutlined />} onClick={() => void openVideoPromptPreview()}>
-                        预览提示词
-                      </Button>
-                      <Button
-                        type="primary"
-                        icon={<VideoCameraOutlined />}
-                        loading={videoPromptPreviewSubmitting || videoTaskPolling}
-                        onClick={() => void openVideoPromptPreview()}
-                      >
-                        预览并生成视频
+                      <Button type="primary" icon={<VideoCameraOutlined />} loading={videoPromptPreviewSubmitting || videoTaskPolling} onClick={() => void openVideoPromptPreview()}>
+                        生成视频
                       </Button>
                       {videoTaskStatus ? <span className="text-xs text-gray-500">任务状态：{videoTaskStatus}</span> : null}
                     </Space>
-                    <div className="mt-2 text-xs text-slate-500">
-                      先看“视频生成提示词预览”，再确认提交。若当前模型不支持你选的参考模式，预览阶段会直接提示，不再静默忽略关键帧或多图参考。
-                    </div>
                   </div>
 
                   <div className="cs-group">
@@ -6133,19 +5771,7 @@ function Inspector(props: {
         >
           {(() => {
             const hasBasePrompt = keyframePromptPreviewDraft.trim().length > 0
-            const isPromptTaskActive = Boolean(
-              promptTask &&
-                (promptTask.status === 'pending' ||
-                  promptTask.status === 'running' ||
-                  promptTask.status === 'streaming'),
-            )
-            const renderStatusMeta = isPromptTaskActive
-              ? {
-                  color: 'blue' as const,
-                  label: '同步中',
-                  description: '基础提示词正在生成，完成后会自动更新最终生成提示词。',
-                }
-              : getKeyframeRenderStatusMeta(keyframePromptRenderState)
+            const renderStatusMeta = getKeyframeRenderStatusMeta(keyframePromptRenderState)
             const debugVisualStyle = readDebugContextText(keyframePromptDebugContext, 'visual_style')
             const debugStyle = readDebugContextText(keyframePromptDebugContext, 'style')
             const debugCharacterContext = readDebugContextText(keyframePromptDebugContext, 'character_context')
@@ -6296,7 +5922,7 @@ function Inspector(props: {
                 </div>
                 {!hasBasePrompt ? (
                   <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-                    当前{frameLabel[keyframePromptPreviewFrameType]}还没有基础提示词。点击“AI生成”可为当前帧生成一版，再按需修改；也可以直接手动输入。
+                    当前还没有基础提示词。你可以先让 AI 生成一版，再按需修改；也可以直接手动输入。
                   </div>
                   ) : null}
                   {hasPromptQualityChecks ? (
@@ -6611,8 +6237,8 @@ function Inspector(props: {
                             prompt: keyframePromptPreviewDraft,
                             refFileIds:
                               keyframePromptPreviewRefFileIds.length > 0
-                                ? keyframePromptPreviewRefFileIds.filter((fid) => !isSystemFaceDetailRef(fid))
-                                : frameReferenceFileIds(keyframePromptPreviewFrameType),
+                                ? keyframePromptPreviewRefFileIds
+                                : autoKeyframeRefFileIds,
                           })
                         }
                         disabled={!hasBasePrompt}

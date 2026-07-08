@@ -34,19 +34,10 @@ class Settings(BaseSettings):
     redis_db: int = 0
     redis_password: str | None = None
     celery_broker_url: str | None = None
-    task_execution_mode: str = "auto"
-    deepseek_api_key: str | None = None
-    deepseek_base_url: str = "https://api.deepseek.com/v1"
-    deepseek_text_model: str = "deepseek-chat"
 
     # CORS：环境变量中建议使用逗号分隔（更贴近 docker-compose 用法）
     # 也兼容 JSON 数组：'["http://a","http://b"]'
-    cors_origins: str = ",".join(
-        [
-            "http://localhost:5678",
-            "http://127.0.0.1:5678",
-        ]
-    )
+    cors_origins: str = "http://localhost:7788,http://127.0.0.1:7788"
 
     @property
     def cors_origins_list(self) -> list[str]:

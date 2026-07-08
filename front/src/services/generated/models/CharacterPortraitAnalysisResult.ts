@@ -8,6 +8,5 @@
 export type CharacterPortraitAnalysisResult = {
     issues: Array<string>;
     optimized_description: string;
-    visual_fingerprint?: string;
 };
 

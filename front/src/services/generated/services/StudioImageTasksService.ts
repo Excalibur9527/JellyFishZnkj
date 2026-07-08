@@ -5,7 +5,6 @@
 import type { ApiResponse_RenderedPromptResponse_ } from '../models/ApiResponse_RenderedPromptResponse_';
 import type { ApiResponse_RenderedShotFramePromptRead_ } from '../models/ApiResponse_RenderedShotFramePromptRead_';
 import type { ApiResponse_TaskCreated_ } from '../models/ApiResponse_TaskCreated_';
-import type { CharacterSheetTaskRequest } from '../models/CharacterSheetTaskRequest';
 import type { ShotFrameImageTaskRequest } from '../models/ShotFrameImageTaskRequest';
 import type { ShotFramePromptRenderRequest } from '../models/ShotFramePromptRenderRequest';
 import type { StudioImageTaskRequest } from '../models/StudioImageTaskRequest';
@@ -174,56 +173,6 @@ export class StudioImageTasksService {
             },
             body: requestBody,
             mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-    /**
-     * 角色设定图生成任务
-     * 为角色生成多角度设定图，存入 view_angle=DETAIL / quality_level=ULTRA 槽位。
-     *
-     * 设定图生成后会被分镜帧参考图选取逻辑自动优先选用，用于提升跨镜头角色一致性。
-     * @returns ApiResponse_TaskCreated_ Successful Response
-     * @throws ApiError
-     */
-    public static createCharacterSheetGenerationTaskApiV1StudioImageTasksCharactersCharacterIdSheetTasksPost({
-        characterId,
-        requestBody,
-    }: {
-        characterId: string,
-        requestBody: CharacterSheetTaskRequest,
-    }): CancelablePromise<ApiResponse_TaskCreated_> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/studio/image-tasks/characters/{character_id}/sheet-tasks',
-            path: {
-                'character_id': characterId,
-            },
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-    /**
-     * 角色设定图提示词预览
-     * 预览角色设定图的提示词和参考图，不创建生成任务。
-     * @returns ApiResponse_RenderedPromptResponse_ Successful Response
-     * @throws ApiError
-     */
-    public static renderCharacterSheetPromptApiV1StudioImageTasksCharactersCharacterIdSheetRenderPromptPost({
-        characterId,
-    }: {
-        characterId: string,
-    }): CancelablePromise<ApiResponse_RenderedPromptResponse_> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/studio/image-tasks/characters/{character_id}/sheet-render-prompt',
-            path: {
-                'character_id': characterId,
-            },
             errors: {
                 422: `Validation Error`,
             },

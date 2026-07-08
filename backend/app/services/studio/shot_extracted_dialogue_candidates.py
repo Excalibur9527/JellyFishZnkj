@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import re
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -58,38 +57,6 @@ def _dialogue_line_mode(value: Any) -> DialogueLineMode:
     return DialogueLineMode(str(value or DialogueLineMode.dialogue.value))
 
 
-_DIALOGUE_QUOTE_PATTERN = re.compile(r"[“\"]([^”\"]{1,240})[”\"]")
-
-
-def _fallback_dialogue_lines_from_excerpt(shot_draft: Any) -> list[dict[str, Any]]:
-    """从镜头摘录中的显式引号兜底提取对白。
-
-    AI 提取草稿偶尔会漏掉 `dialogue_lines`，但分镜文本本身已经包含
-    `“台词”` 这类明确对白。这个兜底只处理带完整引号的短文本，避免把普通
-    叙述误判成对白；提取出的候选仍需在分镜编辑页确认。
-    """
-    excerpt = str(getattr(shot_draft, "script_excerpt", "") or "")
-    candidates: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for index, match in enumerate(_DIALOGUE_QUOTE_PATTERN.finditer(excerpt)):
-        text = match.group(1).strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        candidates.append(
-            {
-                "index": index,
-                "text": text,
-                "line_mode": DialogueLineMode.dialogue,
-                "speaker_name": None,
-                "target_name": None,
-                "payload": {"fallback": "quoted_script_excerpt"},
-                "source": "quote_fallback",
-            }
-        )
-    return candidates
-
-
 def _build_candidates_from_shot_draft(shot_draft: Any) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for item in list(getattr(shot_draft, "dialogue_lines", []) or []):
@@ -106,8 +73,6 @@ def _build_candidates_from_shot_draft(shot_draft: Any) -> list[dict[str, Any]]:
                 "payload": {},
             }
         )
-    if not candidates:
-        return _fallback_dialogue_lines_from_excerpt(shot_draft)
     return candidates
 
 

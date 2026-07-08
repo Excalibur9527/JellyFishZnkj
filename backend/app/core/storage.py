@@ -9,8 +9,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import base64
-from pathlib import Path
 from typing import Any, BinaryIO
 
 from anyio import to_thread
@@ -19,11 +17,6 @@ from botocore.client import Config as BotoConfig
 from botocore.exceptions import ClientError
 
 from app.config import settings
-
-
-_INLINE_SVG_PREFIX = "inline-svg:"
-_LOCAL_FILE_PREFIX = "local-file:"
-_LOCAL_STORAGE_DIR = Path(__file__).resolve().parent.parent / ".local_storage"
 
 
 @dataclass
@@ -53,15 +46,6 @@ def _build_s3_client():
     return client
 
 
-def _use_local_storage() -> bool:
-    return not bool((settings.s3_bucket_name or "").strip())
-
-
-def _local_storage_path(key: str) -> Path:
-    normalized = _normalize_key(key)
-    return _LOCAL_STORAGE_DIR / normalized
-
-
 def _normalize_key(key: str) -> str:
     key = key.lstrip("/")
     base = settings.s3_base_path.strip().strip("/")
@@ -71,11 +55,6 @@ def _normalize_key(key: str) -> str:
 
 
 def _build_public_url(key: str) -> str:
-    if key.startswith(_INLINE_SVG_PREFIX):
-        encoded = key[len(_INLINE_SVG_PREFIX):]
-        return f"data:image/svg+xml;base64,{encoded}"
-    if key.startswith(_LOCAL_FILE_PREFIX):
-        return ""
     key = _normalize_key(key)
     if settings.s3_public_base_url:
         base = settings.s3_public_base_url.rstrip("/")
@@ -147,21 +126,6 @@ async def upload_file(
     - extra_args：透传给 boto3 的 ExtraArgs，如 {"ACL": "public-read"}。
     """
 
-    if _use_local_storage():
-        local_path = _local_storage_path(key)
-
-        def _write_local() -> None:
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            if isinstance(data, (bytes, bytearray)):
-                local_path.write_bytes(bytes(data))
-                return
-            with local_path.open("wb") as f:
-                f.write(data.read())
-
-        await to_thread.run_sync(_write_local)
-        local_key = f"{_LOCAL_FILE_PREFIX}{_normalize_key(key)}"
-        return StoredFileInfo(key=local_key, url="", etag=None)
-
     client = _build_s3_client()
     bucket = settings.s3_bucket_name
     if bucket is None:
@@ -183,22 +147,12 @@ async def upload_file(
     if isinstance(result, dict):
         etag = result.get("ETag")
 
-    url = _build_public_url(s3_key)
+    url = _build_public_url(key)
     return StoredFileInfo(key=s3_key, url=url, etag=etag)
 
 
 async def download_file(*, key: str) -> bytes:
     """下载文件内容（整个对象读入内存）。"""
-    if key.startswith(_INLINE_SVG_PREFIX):
-        return base64.b64decode(key[len(_INLINE_SVG_PREFIX):])
-    if key.startswith(_LOCAL_FILE_PREFIX):
-        local_rel = key[len(_LOCAL_FILE_PREFIX):]
-        local_path = _LOCAL_STORAGE_DIR / local_rel
-
-        def _read_local() -> bytes:
-            return local_path.read_bytes()
-
-        return await to_thread.run_sync(_read_local)
     client = _build_s3_client()
     bucket = settings.s3_bucket_name
     if bucket is None:
@@ -216,52 +170,6 @@ async def download_file(*, key: str) -> bytes:
 
 async def get_file_info(*, key: str) -> StoredFileInfo:
     """获取文件元信息（不下载内容）。"""
-    if key.startswith(_INLINE_SVG_PREFIX):
-        content = base64.b64decode(key[len(_INLINE_SVG_PREFIX):])
-        return StoredFileInfo(
-            key=key,
-            url=f"data:image/svg+xml;base64,{key[len(_INLINE_SVG_PREFIX):]}",
-            size=len(content),
-            content_type="image/svg+xml",
-            etag=None,
-            extra=None,
-        )
-    if key.startswith(_LOCAL_FILE_PREFIX):
-        local_rel = key[len(_LOCAL_FILE_PREFIX):]
-        local_path = _LOCAL_STORAGE_DIR / local_rel
-
-        def _stat_local() -> tuple[int, str | None]:
-            stat = local_path.stat()
-            suffix = local_path.suffix.lower()
-            content_type_map = {
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-                ".png": "image/png",
-                ".webp": "image/webp",
-                ".gif": "image/gif",
-                ".mp4": "video/mp4",
-                ".mov": "video/quicktime",
-                ".webm": "video/webm",
-                ".mp3": "audio/mpeg",
-                ".wav": "audio/wav",
-                ".m4a": "audio/mp4",
-                ".aac": "audio/aac",
-                ".ogg": "audio/ogg",
-                ".flac": "audio/flac",
-                ".aiff": "audio/aiff",
-                ".aif": "audio/aiff",
-            }
-            return stat.st_size, content_type_map.get(suffix)
-
-        size, content_type = await to_thread.run_sync(_stat_local)
-        return StoredFileInfo(
-            key=key,
-            url="",
-            size=size,
-            content_type=content_type or "application/octet-stream",
-            etag=None,
-            extra=None,
-        )
     client = _build_s3_client()
     bucket = settings.s3_bucket_name
     if bucket is None:
@@ -291,8 +199,6 @@ async def get_file_info(*, key: str) -> StoredFileInfo:
 
 async def list_files(*, prefix: str = "") -> list[StoredFileInfo]:
     """根据前缀列出文件（最多一页，若需翻页可扩展）。"""
-    if _use_local_storage():
-        return []
     client = _build_s3_client()
     bucket = settings.s3_bucket_name
     if bucket is None:
@@ -324,16 +230,6 @@ async def list_files(*, prefix: str = "") -> list[StoredFileInfo]:
 
 async def delete_file(*, key: str) -> None:
     """删除文件。"""
-    if key.startswith(_LOCAL_FILE_PREFIX):
-        local_rel = key[len(_LOCAL_FILE_PREFIX):]
-        local_path = _LOCAL_STORAGE_DIR / local_rel
-
-        def _delete_local() -> None:
-            if local_path.exists():
-                local_path.unlink()
-
-        await to_thread.run_sync(_delete_local)
-        return
     client = _build_s3_client()
     bucket = settings.s3_bucket_name
     if bucket is None:
@@ -345,3 +241,4 @@ async def delete_file(*, key: str) -> None:
         client.delete_object(Bucket=bucket, Key=s3_key)
 
     await to_thread.run_sync(_delete)
+

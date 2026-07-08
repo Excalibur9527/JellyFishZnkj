@@ -15,10 +15,6 @@ export type ScriptDividerRequest = {
      */
     write_to_db?: boolean;
     /**
-     * 分镜写库后是否继续提取每个镜头的资产、对白与镜头语义
-     */
-    extract_after_divide?: boolean;
-    /**
      * 章节 ID（write_to_db=true 时必填）
      */
     chapter_id?: (string | null);

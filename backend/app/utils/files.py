@@ -16,14 +16,11 @@ from app.models.types import FileUsageKind
 
 
 async def _infer_file_type_from_ext(ext: str) -> FileType:
-    """按扩展名推断素材类型，供生成任务落库时复用。"""
     ext = ext.lower()
     if ext in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
         return FileType.image
     if ext in {".mp4", ".mov", ".mkv", ".avi", ".webm"}:
         return FileType.video
-    if ext in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".aiff", ".aif"}:
-        return FileType.audio
     # 默认按图片处理，调用方若有更精细需求可在外层再封装
     return FileType.image
 
@@ -40,7 +37,6 @@ class FileUsageCreateParams:
 
 
 async def _infer_file_type_from_content_type(content_type: str | None) -> FileType:
-    """按 MIME 类型推断素材类型，避免远端音频被当成图片保存。"""
     if not content_type:
         return FileType.image
     ct = content_type.lower()
@@ -48,8 +44,6 @@ async def _infer_file_type_from_content_type(content_type: str | None) -> FileTy
         return FileType.image
     if ct.startswith("video/"):
         return FileType.video
-    if ct.startswith("audio/"):
-        return FileType.audio
     return FileType.image
 
 
@@ -111,7 +105,7 @@ async def create_file_from_url_or_b64(
     file_type = await _infer_file_type_from_content_type(content_type)
     if not ext:
         # 根据类型给一个默认后缀
-        ext = ".png" if file_type == FileType.image else ".m4a" if file_type == FileType.audio else ".mp4"
+        ext = ".png" if file_type == FileType.image else ".mp4"
 
     display_name = name or os.path.splitext(filename)[0] or filename
 
@@ -124,16 +118,13 @@ async def create_file_from_url_or_b64(
     )
 
     file_id = str(uuid.uuid4())
-    # storage.upload_file 会根据当前存储后端返回真实可读 key。
-    # 本地存储模式下该值带有 local-file: 前缀；若继续保存原始 key，
-    # 下载接口会误走 S3 分支，导致前端拿到裂图。
     file_obj = FileItem(
         id=file_id,
         type=file_type,
         name=display_name,
         thumbnail=info.url,
         tags=[],
-        storage_key=info.key,
+        storage_key=key,
     )
     session.add(file_obj)
     await session.flush()
@@ -153,3 +144,4 @@ async def create_file_from_url_or_b64(
         )
 
     return file_obj
+

@@ -54,7 +54,6 @@ _PROMPT_CATEGORY_ZH: dict[PromptCategory, tuple[str, str]] = {
     PromptCategory.storyboard_prompt: ("分镜提示词", "用于分镜拆解与描述的提示词"),
     # 预留/扩展类别（即使暂时不用，也需要完整映射用于前端展示与校验）
     PromptCategory.combined: ("组合提示词", "用于组合多段提示词的模板"),
-    PromptCategory.character_sheet: ("角色设定图提示词", "用于生成角色设定图的提示词"),
     PromptCategory.bgm: ("背景音乐提示词", "用于生成背景音乐描述的提示词"),
     PromptCategory.sfx: ("音效提示词", "用于生成音效描述的提示词"),
 }

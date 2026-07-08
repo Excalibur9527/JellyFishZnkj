@@ -14,7 +14,6 @@ from app.core.task_manager.types import TaskStatus
 from app.core.contracts.provider import ProviderConfig
 from app.core.contracts.video_generation import VideoGenerationInput, VideoGenerationResult
 from app.core.tasks import VideoGenerationTask
-from app.core.integrations.video_capabilities import validate_video_reference_mode_support
 from app.models.llm import Model, ModelCategoryKey, ModelSettings
 from app.models.task_links import GenerationTaskLink
 from app.models.studio import FileItem, Shot, ShotDetail, ShotFrameType
@@ -85,16 +84,6 @@ async def preview_prompt_and_images(
     prompt: str | None,
     images: list[str] | None = None,
 ) -> tuple[str, list[str], dict | None]:
-    provider_cfg = await _load_preview_provider_config_if_available(db)
-    if provider_cfg is not None:
-        try:
-            validate_video_reference_mode_support(
-                provider=provider_cfg.provider,
-                reference_mode=reference_mode,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
     shot_detail = await validate_shot_and_duration(db, shot_id)
     base = build_video_base_draft(shot_id=shot_id, prompt=prompt)
     context = await build_video_context(
@@ -111,23 +100,6 @@ async def preview_prompt_and_images(
         pack = prompt_preview_payload.get("pack")
         return submission.prompt, submission.images, pack if isinstance(pack, dict) else None
     return submission.prompt, submission.images, None
-
-
-async def _load_preview_provider_config_if_available(db: AsyncSession) -> ProviderConfig | None:
-    """为视频提示词预览尽量加载供应商能力，加载失败时不阻断 prompt 渲染。
-
-    预览弹窗的职责是让用户看到当前镜头会如何组织成视频提示词；默认视频
-    模型缺失应由准备度与提交阶段明确阻断，而不是让预览区域变成空白。
-    如果当前默认模型和供应商可用，则仍然提前校验 reference_mode 能力。
-    """
-
-    try:
-        model = await resolve_default_video_model(db)
-        return await load_provider_config_by_model(db, model)
-    except HTTPException as exc:
-        if exc.status_code == 503:
-            return None
-        raise
 
 
 async def resolve_default_video_model(db: AsyncSession) -> Model:
@@ -186,13 +158,6 @@ async def build_run_args(
 ) -> dict:
     model = await resolve_default_video_model(db)
     provider_cfg = await load_provider_config_by_model(db, model)
-    try:
-        validate_video_reference_mode_support(
-            provider=provider_cfg.provider,
-            reference_mode=reference_mode,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     shot_detail = await validate_shot_and_duration(db, shot_id)
     resolved_ratio = await resolve_effective_video_options(requested_ratio=ratio)
     base = build_video_base_draft(shot_id=shot_id, prompt=prompt)
@@ -208,9 +173,6 @@ async def build_run_args(
     final_prompt = submission.prompt.strip()
     if not final_prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
-    # 可灵 API 限制 prompt 最多 2500 字符
-    if len(final_prompt) > 2500:
-        final_prompt = final_prompt[:2500]
 
     required_frames = tuple(ShotFrameType(item) for item in REQUIRED_FRAMES_BY_MODE[reference_mode])
     frame_data_urls = [await file_id_to_data_url(db, file_id=file_id) for file_id in submission.images]
@@ -248,8 +210,8 @@ async def build_run_args(
     }
     if character_references:
         input_dict["character_references"] = character_references
-    if shot_detail.movement:
-        input_dict["camera_movement"] = str(shot_detail.movement.value if hasattr(shot_detail.movement, 'value') else shot_detail.movement)
+    if shot_detail.camera_movement:
+        input_dict["camera_movement"] = str(shot_detail.camera_movement.value if hasattr(shot_detail.camera_movement, 'value') else shot_detail.camera_movement)
 
     run_args = {
         "shot_id": shot_id,

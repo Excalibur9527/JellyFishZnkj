@@ -32,7 +32,6 @@ from app.models.studio_shots import (
     ShotCharacterLink,
     ShotDetail,
     ShotDialogLine,
-    ShotAudioClip,
     ShotFrameImage,
 )
 from app.models.types import (
@@ -88,7 +87,6 @@ __all__ = [
     "ShotDetail",
     "ShotFrameImage",
     "ShotDialogLine",
-    "ShotAudioClip",
     "ShotExtractedCandidate",
     "ShotExtractedDialogueCandidate",
     "Actor",

@@ -51,3 +51,4 @@ def build_frame_context(
         images=items or [],
         ordered_refs=build_ordered_shot_frame_references(items=items),
     )
+

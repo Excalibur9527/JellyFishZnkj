@@ -208,44 +208,6 @@ async def test_build_default_text_llm_supports_thinking_toggle(monkeypatch: pyte
     await engine.dispose()
 
 
-@pytest.mark.asyncio
-async def test_build_default_text_llm_does_not_force_thinking_toggle_for_deepseek(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeChatOpenAI:
-        def __init__(self, **kwargs):  # noqa: ANN003, ANN204
-            self.kwargs = kwargs
-
-    fake_module = types.ModuleType("langchain_openai")
-    fake_module.ChatOpenAI = FakeChatOpenAI
-    monkeypatch.setitem(sys.modules, "langchain_openai", fake_module)
-
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
-    session_local = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    async with session_local() as db:
-        provider = Provider(id="p1", name="DeepSeek", base_url="https://api.deepseek.com/v1", api_key="k")
-        model = Model(
-            id="m_text",
-            name="deepseek-chat",
-            category=ModelCategoryKey.text,
-            provider_id="p1",
-            params={"temperature": 0.2},
-        )
-        settings = ModelSettings(id=1, default_text_model_id="m_text")
-        db.add_all([provider, model, settings])
-        await db.commit()
-
-        nothinking_llm = await build_default_text_llm(db, thinking=False)
-
-        assert isinstance(nothinking_llm, FakeChatOpenAI)
-        assert "extra_body" not in nothinking_llm.kwargs
-
-    await engine.dispose()
-
-
 def test_resolve_effective_base_url_prefers_category_specific_url() -> None:
     provider = Provider(
         id="p1",
@@ -267,3 +229,4 @@ def test_resolve_effective_base_url_prefers_category_specific_url() -> None:
         resolve_effective_base_url(provider=provider, category=ModelCategoryKey.video)
         == "https://video-gateway.example/v1"
     )
+

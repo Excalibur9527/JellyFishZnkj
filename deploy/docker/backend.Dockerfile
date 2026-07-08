@@ -6,9 +6,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps for common wheels / TLS / ffmpeg (video-audio mux)
+# System deps for common wheels / TLS
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 
 # Install uv (Python package manager)
@@ -25,6 +25,7 @@ COPY backend/ ./
 # Now install the project (and ensure entrypoints/imports work)
 RUN uv sync --frozen --no-dev
 
-EXPOSE 8765
+EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765"]
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+

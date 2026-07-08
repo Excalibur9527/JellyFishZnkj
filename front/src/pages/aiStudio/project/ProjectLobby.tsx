@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { randomUUID } from '../../../utils/uuid'
 import {
   Card,
   Input,
@@ -119,7 +118,12 @@ const ProjectLobby: React.FC = () => {
     }
   }
 
-  const newProjectId = () => randomUUID()
+  const newProjectId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID()
+    }
+    return `p_${Date.now()}_${Math.random().toString(16).slice(2)}`
+  }
 
   const load = async () => {
     setLoading(true)

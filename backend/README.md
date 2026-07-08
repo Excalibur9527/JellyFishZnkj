@@ -136,13 +136,13 @@ cp .env.example .env
 ### 5. 启动服务
 
 ```bash
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8765
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-- API 文档：http://localhost:8765/docs  
-- 健康检查：http://localhost:8765/health  
-- API v1 示例：http://localhost:8765/api/v1/example/prompt  
-- 影视技能（确认路由）：http://localhost:8765/api/v1/film （GET）；实体/分镜抽取见下方，需 **POST** 且路径带 **/api/v1** 前缀。
+- API 文档：http://localhost:8000/docs  
+- 健康检查：http://localhost:8000/health  
+- API v1 示例：http://localhost:8000/api/v1/example/prompt  
+- 影视技能（确认路由）：http://localhost:8000/api/v1/film （GET）；实体/分镜抽取见下方，需 **POST** 且路径带 **/api/v1** 前缀。
 
 ### 影视技能 API（需配置 OPENAI_API_KEY）
 

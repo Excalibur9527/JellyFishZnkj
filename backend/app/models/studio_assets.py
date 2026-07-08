@@ -180,12 +180,6 @@ class Actor(Base, TimestampMixin):
         default=ProjectVisualStyle.live_action,
         comment="画面表现形式（现实/动漫等）",
     )
-    visual_fingerprint: Mapped[str] = mapped_column(
-        Text,
-        nullable=False,
-        default="",
-        comment="视觉指纹：AI 优化后的外貌描述",
-    )
 
     prompt_template: Mapped["PromptTemplate | None"] = relationship()
     images: Mapped[list["ActorImage"]] = relationship(
@@ -324,3 +318,4 @@ __all__ = [
     "Character",
     "CharacterPropLink",
 ]
+

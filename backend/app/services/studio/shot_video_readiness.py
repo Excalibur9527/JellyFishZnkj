@@ -152,8 +152,6 @@ async def get_shot_video_readiness(
     )
     if extraction_ok:
         extraction_msg = "信息提取确认已完成" if not shot.skip_extraction else "当前镜头已标记为无需提取"
-    elif shot.last_extracted_at is None:
-        extraction_msg = "当前镜头尚未完成信息提取确认，请前往分镜编辑页处理；若无需提取，可标记为无需提取"
     else:
         extraction_msg = f"仍有待确认项：资产 {pending_assets} 项，对白 {pending_dialogues} 项"
 

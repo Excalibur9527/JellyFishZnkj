@@ -12,7 +12,6 @@ from app.models.types import (
     CameraMovement,
     CameraShotType,
     DialogueLineMode,
-    FileUsageKind,
     ShotCandidateStatus,
     ShotCandidateType,
     ShotDialogueCandidateStatus,
@@ -126,12 +125,6 @@ class Shot(Base,TimestampMixin):
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="ShotExtractedDialogueCandidate.index",
-    )
-    audio_clips: Mapped[list["ShotAudioClip"]] = relationship(
-        back_populates="shot",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        order_by="ShotAudioClip.start_ms",
     )
 
     __table_args__ = (
@@ -366,69 +359,6 @@ class ShotDialogLine(Base,TimestampMixin):
     )
 
 
-class ShotAudioClip(Base, TimestampMixin):
-    """镜头音频片段。
-
-    这个表把“生成出来的音频文件”和“它在镜头中的播放位置”分开记录：
-    - FileItem 负责真实文件与下载；
-    - ShotAudioClip 负责对白/BGM/音效在镜头内的时间、音量与来源。
-    这样后续既能先单独试听配音，也能在有 ffmpeg 后把多个音轨合成进视频。
-    """
-
-    __tablename__ = "shot_audio_clips"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="音频片段 ID")
-    shot_id: Mapped[str] = mapped_column(
-        String(64),
-        ForeignKey("shots.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-        comment="所属镜头 ID",
-    )
-    file_id: Mapped[str] = mapped_column(
-        String(64),
-        ForeignKey("files.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-        comment="关联音频文件 ID（FileItem，type=audio）",
-    )
-    dialogue_line_id: Mapped[int | None] = mapped_column(
-        Integer,
-        ForeignKey("shot_dialog_lines.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-        comment="对应对白行 ID；BGM/音效可为空",
-    )
-    clip_type: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
-        default="dialogue",
-        index=True,
-        comment="音频类型：dialogue / voice_over / bgm / sfx",
-    )
-    label: Mapped[str] = mapped_column(String(255), nullable=False, default="", comment="展示名称")
-    start_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="镜头内起始时间（毫秒）")
-    end_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="镜头内结束时间（毫秒）")
-    volume: Mapped[int] = mapped_column(Integer, nullable=False, default=100, comment="音量百分比")
-    track: Mapped[int] = mapped_column(Integer, nullable=False, default=1, comment="音轨序号")
-    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="local_say", comment="音频来源")
-    voice: Mapped[str] = mapped_column(String(128), nullable=False, default="", comment="TTS 声音/音色")
-    usage_kind: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        default=FileUsageKind.generated_audio.value,
-        comment="文件用途快照，默认 generated_audio",
-    )
-
-    shot: Mapped["Shot"] = relationship(back_populates="audio_clips")
-    file: Mapped["FileItem"] = relationship()
-    dialogue_line: Mapped["ShotDialogLine | None"] = relationship()
-
-    __table_args__ = (
-        Index("ix_shot_audio_clips_shot_track_start", "shot_id", "track", "start_ms"),
-    )
-
-
 class ShotCharacterLink(Base,TimestampMixin):
     """镜头引用角色（多对多）。
 
@@ -614,7 +544,6 @@ __all__ = [
     "ShotDetail",
     "ShotFrameImage",
     "ShotDialogLine",
-    "ShotAudioClip",
     "ShotCharacterLink",
     "ShotExtractedCandidate",
     "ShotExtractedDialogueCandidate",

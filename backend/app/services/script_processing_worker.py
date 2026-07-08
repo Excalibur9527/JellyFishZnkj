@@ -9,7 +9,6 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.chains.agents import ElementExtractorAgent, ScriptDividerAgent
 from app.chains.agents import (
     CharacterPortraitAnalysisAgent,
@@ -27,14 +26,12 @@ from app.chains.agents.script_processing_agents import (
     ScriptSimplificationResult,
 )
 from app.core.db_sync import sync_session_maker
-from app.services.script_division_fallback import divide_script_locally
 from app.services.script_extraction_cache import (
     build_script_extract_cache_key,
     get_cached_script_extract,
     set_cached_script_extract,
 )
 from app.services.llm.runtime import build_default_text_llm_sync
-from app.models.studio import Chapter
 from app.services.studio.script_division import write_division_result_to_chapter_sync
 from app.services.studio.shot_extracted_candidates import (
     sync_from_extraction_draft_sync as sync_shot_extracted_candidates_from_draft_sync,
@@ -53,26 +50,8 @@ from app.services.worker.task_executor import (
 logger = logging.getLogger(__name__)
 
 
-def _allow_local_divide_fallback() -> bool:
-    """仅在本地 SQLite 环境允许规则法分镜兜底。"""
-
-    database_url = (settings.database_url or "").strip().lower()
-    return database_url.startswith("sqlite")
-
-
 class DivideResultGenerator(AbstractLLMResultGenerator):
     thinking = False
-
-    def generate(self, db: Session, run_args: dict[str, Any]) -> ScriptDivisionResult:
-        """优先走在线文本模型，失败时在本地开发环境降级为规则分镜。"""
-
-        try:
-            return super().generate(db, run_args)
-        except Exception:
-            if not _allow_local_divide_fallback():
-                raise
-            logger.exception("script divide llm unavailable, falling back to local rule-based divider")
-            return divide_script_locally(str(run_args.get("script_text") or ""))
 
     def generate_with_llm(self, llm, run_args: dict[str, Any]) -> ScriptDivisionResult:
         agent = ScriptDividerAgent(llm)
@@ -182,30 +161,10 @@ class DivideTaskExecutor(AbstractWorkerTaskExecutor):
         return bool(run_args.get("write_to_db"))
 
     def apply_result(self, ctx: WorkerTaskContext, run_args: dict[str, Any], result: ScriptDivisionResult) -> None:
-        """写入分镜，并按主流程配置继续完成镜头级信息提取。
-
-        分镜列表页的“一键提取”表达的是完整准备流程，因此不能只创建
-        Shot 后留下 `last_extracted_at = NULL`。调试调用仍可关闭串联提取。
-        """
         chapter_id = str(run_args.get("chapter_id") or "")
         if not chapter_id:
             raise HTTPException(status_code=400, detail="chapter_id is required for write_to_db=true")
         apply_division_result(ctx.db, chapter_id=chapter_id, result=result)
-        if not bool(run_args.get("extract_after_divide")):
-            return
-
-        chapter = ctx.db.get(Chapter, chapter_id)
-        if chapter is None:
-            raise HTTPException(status_code=400, detail="Chapter not found")
-        draft, _from_cache = generate_extraction_result(
-            db=ctx.db,
-            project_id=chapter.project_id,
-            chapter_id=chapter_id,
-            script_division=result.model_dump(),
-            consistency=None,
-            refresh_cache=False,
-        )
-        apply_extraction_result(ctx.db, chapter_id=chapter_id, draft=draft)
 
 
 class ExtractTaskExecutor(AbstractWorkerTaskExecutor):

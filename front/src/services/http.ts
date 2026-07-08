@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
-import { resolveApiBaseUrl } from './backendBase'
 
-const baseURL = resolveApiBaseUrl()
+const backendBaseUrl = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:8000'
+const baseURL = import.meta.env.VITE_API_BASE_URL ?? `${backendBaseUrl}/api`
 
 const http: AxiosInstance = axios.create({
   baseURL,

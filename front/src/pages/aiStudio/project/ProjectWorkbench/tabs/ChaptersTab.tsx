@@ -154,7 +154,7 @@ export function ChaptersTab() {
     if (!projectId) return
     try {
       const nextIndex = Math.max(0, ...chapters.map((c) => c.index)) + 1
-      const createdId = newId()
+      const createdId = newId('c')
       const title = createTitle.trim()
       const rawText = createContent
       const draftChapter: Chapter = {
@@ -199,7 +199,7 @@ export function ChaptersTab() {
     }
     if (!projectId) return
     const nextIndex = Math.max(0, ...chapters.map((c) => c.index)) + 1
-    const createdId = newId()
+    const createdId = newId('c')
     const title = createTitle.trim()
     const rawText = createContent
     const draftChapter: Chapter = {
@@ -264,7 +264,6 @@ export function ChaptersTab() {
               chapter_id: record.id,
               script_text: scriptText,
               write_to_db: true,
-              extract_after_divide: true,
             },
           }),
         trackTaskData: (data) => {

@@ -145,14 +145,8 @@ async def test_preview_prompt_and_images_uses_auto_frame_ids() -> None:
     db, engine = await _build_session()
     async with db:
         await _seed_shot_graph(db)
-        provider = Provider(id="p1", name="火山引擎", base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="k")
-        model = Model(id="m_video", name="doubao-seedance-2-0", category=ModelCategoryKey.video, provider_id="p1")
-        settings = ModelSettings(id=1, default_video_model_id="m_video")
         db.add_all(
             [
-                provider,
-                model,
-                settings,
                 ShotFrameImage(shot_detail_id="s1", frame_type=ShotFrameType.first, file_id="f1", format="png"),
                 ShotFrameImage(shot_detail_id="s1", frame_type=ShotFrameType.last, file_id="f2", format="png"),
             ]
@@ -189,12 +183,6 @@ async def test_preview_prompt_and_images_prefers_request_images_when_provided() 
     db, engine = await _build_session()
     async with db:
         await _seed_shot_graph(db)
-        provider = Provider(id="p1", name="火山引擎", base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="k")
-        model = Model(id="m_video", name="doubao-seedance-2-0", category=ModelCategoryKey.video, provider_id="p1")
-        settings = ModelSettings(id=1, default_video_model_id="m_video")
-        db.add_all([provider, model, settings])
-        await db.commit()
-
         prompt, images, pack = await preview_prompt_and_images(
             db,
             shot_id="s1",
@@ -214,71 +202,12 @@ async def test_preview_prompt_and_images_prefers_request_images_when_provided() 
 
 
 @pytest.mark.asyncio
-async def test_preview_prompt_and_images_still_renders_when_default_video_model_missing() -> None:
-    """视频提示词预览不应因默认视频模型失效而空白。
-
-    准备度和正式提交阶段仍会阻断缺失模型；但预览用于让用户确认镜头文本、
-    参考帧和连续性上下文，模型配置问题不应吞掉可读 prompt。
-    """
-
-    db, engine = await _build_session()
-    async with db:
-        await _seed_shot_graph(db)
-        settings = ModelSettings(id=1, default_video_model_id="missing-video-model")
-        db.add_all(
-            [
-                settings,
-                ShotFrameImage(shot_detail_id="s1", frame_type=ShotFrameType.first, file_id="f1", format="png"),
-            ]
-        )
-        await db.commit()
-
-        prompt, images, pack = await preview_prompt_and_images(
-            db,
-            shot_id="s1",
-            reference_mode="first",
-            prompt=None,
-        )
-
-        assert "镜头标题：镜头一" in prompt
-        assert "剧本摘录：林川推门而入。" in prompt
-        assert images == ["f1"]
-        assert pack is not None
-    await engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_preview_prompt_and_images_rejects_provider_unsupported_reference_mode() -> None:
-    db, engine = await _build_session()
-    async with db:
-        await _seed_shot_graph(db)
-        provider = Provider(id="p1", name="可灵 AI（中转）", base_url="https://example.com", api_key="k")
-        model = Model(id="m_video", name="kling-omni-video", category=ModelCategoryKey.video, provider_id="p1")
-        settings = ModelSettings(id=1, default_video_model_id="m_video")
-        db.add_all([provider, model, settings])
-        await db.commit()
-
-        with pytest.raises(HTTPException) as exc_info:
-            await preview_prompt_and_images(
-                db,
-                shot_id="s1",
-                reference_mode="key",
-                prompt="测试关键帧",
-                images=["manual-key"],
-            )
-
-        assert exc_info.value.status_code == 400
-        assert "reference_mode=key is not supported by provider=kling_proxy" in str(exc_info.value.detail)
-    await engine.dispose()
-
-
-@pytest.mark.asyncio
 async def test_build_run_args_maps_reference_images(monkeypatch: pytest.MonkeyPatch) -> None:
     db, engine = await _build_session()
     async with db:
         await _seed_shot_graph(db)
-        provider = Provider(id="p1", name="火山引擎", base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="k")
-        model = Model(id="m_video", name="doubao-seedance-2-0", category=ModelCategoryKey.video, provider_id="p1")
+        provider = Provider(id="p1", name="OpenAI", base_url="https://api.openai.com/v1", api_key="k")
+        model = Model(id="m_video", name="sora-mini", category=ModelCategoryKey.video, provider_id="p1")
         settings = ModelSettings(id=1, default_video_model_id="m_video")
         db.add_all([provider, model, settings])
         await db.commit()
@@ -300,40 +229,14 @@ async def test_build_run_args_maps_reference_images(monkeypatch: pytest.MonkeyPa
             ratio="9:16",
         )
 
-        assert run_args["provider"] == "volcengine"
+        assert run_args["provider"] == "openai"
         assert run_args["api_key"] == "k"
-        assert run_args["input"]["model"] == "doubao-seedance-2-0"
+        assert run_args["input"]["model"] == "sora-mini"
         assert run_args["input"]["first_frame_base64"] == "data:image/png;base64,img-first"
         assert run_args["input"]["last_frame_base64"] == "data:image/png;base64,img-last"
         assert run_args["input"]["key_frame_base64"] is None
         assert run_args["input"]["ratio"] == "9:16"
         assert run_args["input"]["seconds"] == 6
-    await engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_build_run_args_rejects_provider_unsupported_multi_frame_mode() -> None:
-    db, engine = await _build_session()
-    async with db:
-        await _seed_shot_graph(db)
-        provider = Provider(id="p1", name="OpenAI", base_url="https://api.openai.com/v1", api_key="k")
-        model = Model(id="m_video", name="sora-mini", category=ModelCategoryKey.video, provider_id="p1")
-        settings = ModelSettings(id=1, default_video_model_id="m_video")
-        db.add_all([provider, model, settings])
-        await db.commit()
-
-        with pytest.raises(HTTPException) as exc_info:
-            await build_run_args(
-                db,
-                shot_id="s1",
-                reference_mode="first_last",
-                prompt="最终视频提示词",
-                images=["img-first", "img-last"],
-                ratio="16:9",
-            )
-
-        assert exc_info.value.status_code == 400
-        assert "reference_mode=first_last is not supported by provider=openai" in str(exc_info.value.detail)
     await engine.dispose()
 
 

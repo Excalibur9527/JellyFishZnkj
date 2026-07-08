@@ -60,7 +60,6 @@ async def test_create_divide_task_creates_task_and_link() -> None:
             chapter_id="chapter-1",
             script_text="一段剧本",
             write_to_db=True,
-            extract_after_divide=True,
         )
 
         assert result.reused is False
@@ -70,7 +69,6 @@ async def test_create_divide_task_creates_task_and_link() -> None:
 
         task = await db.get(GenerationTask, result.task_id)
         assert task is not None
-        assert task.payload["run_args"]["extract_after_divide"] is True
 
         link = (
             await db.execute(

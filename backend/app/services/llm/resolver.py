@@ -9,16 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.llm import Model, ModelCategoryKey, ModelSettings, Provider
 from app.services.common import entity_not_found
-from app.services.llm.provider_resolver import resolve_effective_base_url, resolve_provider_key_from_name
-
-
-def _supports_enable_thinking_toggle(provider: Provider) -> bool:
-    """仅为明确支持该扩展字段的 provider 注入 thinking 开关。"""
-
-    try:
-        return resolve_provider_key_from_name(provider.name) == "openai"
-    except Exception:  # noqa: BLE001 - provider 名称异常时保守降级，不附带额外字段
-        return False
+from app.services.llm.provider_resolver import resolve_effective_base_url
 
 
 def _settings_model_id(settings_row: ModelSettings | None, category: ModelCategoryKey) -> str | None:
@@ -186,7 +177,7 @@ def _build_chat_openai_model(
     if base_url:
         kwargs.setdefault("base_url", base_url)
 
-    if not thinking and _supports_enable_thinking_toggle(provider):
+    if not thinking:
         extra_body = dict(kwargs.get("extra_body") or {})
         extra_body["enable_thinking"] = False
         kwargs["extra_body"] = extra_body

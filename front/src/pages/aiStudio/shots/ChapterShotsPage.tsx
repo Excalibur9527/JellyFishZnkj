@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { randomUUID } from '../../../utils/uuid'
 import {
   Button,
   Card,
@@ -257,7 +256,7 @@ export function ChapterShotsPage() {
       const nextIndex = shots.reduce((m, s) => Math.max(m, s.index), 0) + 1
       const res = await StudioShotsService.createShotApiV1StudioShotsPost({
         requestBody: {
-          id: randomUUID(),
+          id: crypto.randomUUID(),
           chapter_id: chapterId,
           index: nextIndex,
           title: v.title.trim(),
@@ -295,7 +294,6 @@ export function ChapterShotsPage() {
               script_text: scriptText,
               write_to_db: true,
               chapter_id: chapterId,
-              extract_after_divide: true,
             },
           }),
         trackTaskData,

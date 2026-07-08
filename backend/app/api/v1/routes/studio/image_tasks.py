@@ -142,22 +142,6 @@ class RenderedPromptResponse(BaseModel):
     )
 
 
-def _ensure_all_reference_images_resolved(*, expected_file_ids: list[str], ref_images: list[dict[str, str]]) -> None:
-    """确保已声明参考图全部解析为可上传图片，避免少图静默生成。
-
-    业务规则是“关联了就必须传，未关联则不传”。因此 expected_file_ids 为空时
-    允许纯文本生成；只要本次提交声明了参考图，就必须全部解析成 data URL 或
-    URL 后才能创建供应商任务，避免扣费请求里悄悄缺少角色、服装、场景或道具图。
-    """
-
-    expected_count = len(expected_file_ids or [])
-    if expected_count and len(ref_images or []) != expected_count:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"reference images unresolved: expected {expected_count}, got {len(ref_images or [])}",
-        )
-
-
 async def _load_frame_render_guidance(
     *,
     db: AsyncSession,
@@ -192,6 +176,16 @@ async def _load_frame_render_guidance(
 
 
 
+def _ensure_all_reference_images_resolved(*, expected_file_ids: list[str], ref_images: list[dict[str, str]]) -> None:
+    """确保已声明参考图全部解析为可上传图片，避免少图静默生成。"""
+    expected_count = len(expected_file_ids or [])
+    if expected_count and len(ref_images or []) != expected_count:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"reference images unresolved: expected {expected_count}, got {len(ref_images or [])}",
+        )
+
+
 @router.post(
     "/actors/{actor_id}/image-tasks",
     response_model=ApiResponse[TaskCreated],
@@ -217,7 +211,7 @@ async def create_actor_image_generation_task(
         prompt=prompt,
         images=body.images,
     )
-    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=submission.images)
+    ref_images = await _resolve_shot_frame_reference_image_refs_service(db, items=body.images)
     _ensure_all_reference_images_resolved(expected_file_ids=submission.images, ref_images=ref_images)
     task_id = await _create_image_task_and_link_service(
         db=db,
@@ -283,7 +277,7 @@ async def create_asset_image_generation_task(
         prompt=prompt,
         images=body.images,
     )
-    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=submission.images)
+    ref_images = await _resolve_shot_frame_reference_image_refs_service(db, items=body.images)
     _ensure_all_reference_images_resolved(expected_file_ids=submission.images, ref_images=ref_images)
 
     task_id = await _create_image_task_and_link_service(
@@ -349,7 +343,7 @@ async def create_character_image_generation_task(
         prompt=prompt,
         images=body.images,
     )
-    ref_images = await _resolve_reference_image_refs_by_file_ids_service(db, file_ids=submission.images)
+    ref_images = await _resolve_shot_frame_reference_image_refs_service(db, items=body.images)
     _ensure_all_reference_images_resolved(expected_file_ids=submission.images, ref_images=ref_images)
     task_id = await _create_image_task_and_link_service(
         db=db,
@@ -516,14 +510,6 @@ async def create_shot_frame_image_generation_task(
         if not shot_frame_image.format:
             shot_frame_image.format = "png"
     requested_reference_assets = [item.model_dump() for item in body.images]
-    if not _frame_reference_assets_match_service(
-        shot_frame_image,
-        requested_assets=requested_reference_assets,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="frame reference assets mismatch: save references for this frame before generation",
-        )
     _set_frame_reference_assets_service(
         shot_frame_image,
         reference_assets=requested_reference_assets,
@@ -561,21 +547,6 @@ async def render_shot_frame_prompt(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="prompt is required for shot frame render",
-        )
-    frame_stmt = (
-        select(ShotFrameImage)
-        .where(ShotFrameImage.shot_detail_id == shot_id, ShotFrameImage.frame_type == body.frame_type)
-        .limit(1)
-    )
-    frame = (await db.execute(frame_stmt)).scalars().first()
-    requested_reference_assets = [item.model_dump() for item in body.images]
-    if frame is not None and not _frame_reference_assets_match_service(
-        frame,
-        requested_assets=requested_reference_assets,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="frame reference assets mismatch: prompt preview must use this frame's references",
         )
     render_guidance = await _load_frame_render_guidance(
         db=db,

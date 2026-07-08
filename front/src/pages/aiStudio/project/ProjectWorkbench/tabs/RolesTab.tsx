@@ -239,7 +239,7 @@ export function RolesTab() {
     setCreating(true)
     try {
       const createRes = await StudioEntitiesApi.create('character', {
-        id: newId(),
+        id: newId('char'),
         project_id: projectId,
         chapter_id: pendingShotLinkChapterId,
         shot_id: pendingShotLinkShotId,

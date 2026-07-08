@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.core.contracts.provider import ProviderKey
 
 ResponseFormat = Literal["url", "b64_json"]
-ImageInputFidelity = Literal["high", "low"]
 ImageTargetRatio = Literal["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "3:2", "2:3"]
 ImageResolutionProfile = Literal["standard", "high"]
 ImagePurpose = Literal["generic", "video_reference", "asset_image"]
@@ -46,10 +45,6 @@ class ImageGenerationInput(BaseModel):
         default_factory=list,
         description="参考图片列表：存在时 OpenAI 走 /images/edits，火山映射为 image[]",
     )
-    mask: InputImageRef | None = Field(
-        None,
-        description="图片编辑遮罩；用于只允许供应商修改第一张输入图中的局部区域",
-    )
     model: Optional[str] = Field(None, description="模型名称（如 gpt-image-1.5 / doubao-seedream-*）")
     target_ratio: ImageTargetRatio | None = Field(
         None,
@@ -84,10 +79,6 @@ class ImageGenerationInput(BaseModel):
     response_format: ResponseFormat = Field(
         "url",
         description="返回格式：url 或 b64_json（OpenAI 语义）；火山引擎可忽略或仅支持 url",
-    )
-    input_fidelity: Optional[ImageInputFidelity] = Field(
-        None,
-        description="参考图保真强度；OpenAI 图片编辑中 high 会更努力保留输入图特征，尤其是人脸特征",
     )
 
     @model_validator(mode="after")

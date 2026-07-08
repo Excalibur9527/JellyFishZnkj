@@ -195,7 +195,7 @@ Cached spec file:
 
 - `front/openapi.json`
 
-With the backend dev server running at `http://127.0.0.1:8765`, run:
+With the backend dev server running at `http://127.0.0.1:8000`, run:
 
 ```bash
 cd front
@@ -209,8 +209,8 @@ The repository includes a ready-to-run compose setup under
 
 ### Ports
 
-- Frontend: `http://localhost:5678`
-- Backend: `http://localhost:8765` (`/docs` for Swagger)
+- Frontend: `http://localhost:7788`
+- Backend: `http://localhost:8000` (`/docs` for Swagger)
 - MySQL: `localhost:${MYSQL_PORT:-3306}`
 - Redis: `localhost:${REDIS_PORT:-6379}`
 - RustFS: `http://localhost:${RUSTFS_PORT:-9000}`
@@ -230,7 +230,7 @@ docker compose --env-file deploy/compose/.env -f deploy/compose/docker-compose.y
 cd backend
 cp .env.example .env
 uv sync
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8765
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Frontend
@@ -248,3 +248,4 @@ This project is licensed under [Apache-2.0](./LICENSE).
 ## 💬 Community & Feedback
 
 - [GitHub Issues](https://github.com/Forget-C/Jellyfish/issues)
+

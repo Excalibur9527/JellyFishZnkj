@@ -127,9 +127,9 @@ class ShotExtractedDialogueCandidateRead(BaseModel):
 
 class ShotDetailBase(BaseModel):
     id: str = Field(..., description="镜头 ID（与 shots.id 共享主键）")
-    camera_shot: CameraShotType | None = Field(None, description="景别")
-    angle: CameraAngle | None = Field(None, description="机位角度")
-    movement: CameraMovement | None = Field(None, description="运镜方式")
+    camera_shot: CameraShotType = Field(..., description="景别")
+    angle: CameraAngle = Field(..., description="机位角度")
+    movement: CameraMovement = Field(..., description="运镜方式")
     scene_id: str | None = Field(None, description="关联场景 ID（可空）")
     duration: int = Field(0, description="时长（秒）")
     override_video_ratio: str | None = Field(None, description="分镜级视频比例覆盖；为空表示继承项目默认")
@@ -270,7 +270,7 @@ class ShotFrameImageBase(BaseModel):
     format: str = Field("png", description="格式")
     reference_assets: list["ShotLinkedAssetItem"] | None = Field(
         None,
-        description="该帧独立选择的角色、场景、道具与服装参考资产",
+        description="该帧独立选择的参考资产快照；NULL 表示未初始化",
     )
 
 

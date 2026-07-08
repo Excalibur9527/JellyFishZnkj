@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import mimetypes
 import os
 import uuid
 from pathlib import Path
@@ -27,14 +26,11 @@ FILE_ORDER_FIELDS = {"name", "created_at", "updated_at"}
 
 
 def _detect_file_type(filename: str) -> FileType:
-    """根据文件名后缀判断素材类型，避免音频上传被误归为图片。"""
     _, ext = os.path.splitext(filename.lower())
     if ext in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
         return FileType.image
     if ext in {".mp4", ".mov", ".mkv", ".avi", ".webm"}:
         return FileType.video
-    if ext in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".aiff", ".aif"}:
-        return FileType.audio
     raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext or '未知后缀'}")
 
 
@@ -55,42 +51,12 @@ def _resolve_download_media_type(filename: str) -> str:
         ".gif": "image/gif",
         ".mp4": "video/mp4",
         ".mov": "video/quicktime",
-        ".mp3": "audio/mpeg",
-        ".wav": "audio/wav",
-        ".m4a": "audio/mp4",
-        ".aac": "audio/aac",
-        ".ogg": "audio/ogg",
-        ".flac": "audio/flac",
-        ".aiff": "audio/aiff",
-        ".aif": "audio/aiff",
     }
     if ext in media_types:
         return media_types[ext]
     if ext in {".mkv", ".avi", ".webm"}:
         return f"video/{ext.lstrip('.')}"
     return "application/octet-stream"
-
-
-def _resolve_download_filename(
-    *,
-    file_item: FileItem,
-    storage_filename: str,
-    content_type: str | None,
-) -> str:
-    """生成下载文件名，优先补齐可展示文件的扩展名。"""
-    candidate = (file_item.name or "").strip() or storage_filename or "download"
-    if Path(candidate).suffix:
-        return candidate
-    guessed_ext = mimetypes.guess_extension((content_type or "").split(";", 1)[0].strip().lower()) if content_type else None
-    if guessed_ext:
-        return f"{candidate}{guessed_ext}"
-    if file_item.type == FileType.image:
-        return f"{candidate}.png"
-    if file_item.type == FileType.video:
-        return f"{candidate}.mp4"
-    if file_item.type == FileType.audio:
-        return f"{candidate}.m4a"
-    return candidate
 
 
 async def list_files_paginated(
@@ -181,10 +147,8 @@ async def upload_file(
     file_type = _detect_file_type(file.filename)
     display_name = _build_display_name(file.filename, name)
     content = await file.read()
-    file_id = str(uuid.uuid4())
-    safe_filename = Path(file.filename).name or "upload"
 
-    key = f"files/{file_id}-{safe_filename}"
+    key = f"files/{file.filename}"
     info = await storage.upload_file(
         key=key,
         data=content,
@@ -192,19 +156,15 @@ async def upload_file(
         extra_args={"ACL": "public-read"},
     )
 
-    thumbnail = info.url
-    if not thumbnail and file_type == FileType.image:
-        thumbnail = f"/api/v1/studio/files/{file_id}/download"
-
     file_item = await create_and_refresh(
         db,
         FileItem(
-            id=file_id,
+            id=str(uuid.uuid4()),
             type=file_type,
             name=display_name,
-            thumbnail=thumbnail,
+            thumbnail=info.url,
             tags=[],
-            storage_key=info.key,
+            storage_key=key,
         ),
     )
 
@@ -230,21 +190,10 @@ async def build_download_response(
     """根据 file_id 构建下载响应。"""
     file_item = await get_or_404(db, FileItem, file_id, detail=entity_not_found("File"))
     content = await storage.download_file(key=file_item.storage_key)
-    storage_info = await storage.get_file_info(key=file_item.storage_key)
 
-    storage_filename = Path(file_item.storage_key).name or "download"
-    media_type = (storage_info.content_type or "").strip() or _resolve_download_media_type(storage_filename)
-    filename = _resolve_download_filename(
-        file_item=file_item,
-        storage_filename=storage_filename,
-        content_type=media_type,
-    )
-    disposition_kind = (
-        "inline"
-        if media_type.startswith("image/") or media_type.startswith("video/") or media_type.startswith("audio/")
-        else "attachment"
-    )
-    content_disposition = f"{disposition_kind}; filename*=UTF-8''{quote(filename)}"
+    filename = Path(file_item.storage_key).name or "download"
+    media_type = _resolve_download_media_type(filename)
+    content_disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
     return StreamingResponse(
         iter([content]),
         media_type=media_type,

@@ -6,7 +6,6 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.utils import apply_keyword_filter, apply_order, paginate
@@ -138,13 +137,7 @@ async def create_entity(
 
     obj = spec.model(**data)
     db.add(obj)
-    try:
-        await db.flush()
-    except IntegrityError as e:
-        await db.rollback()
-        if "UNIQUE constraint failed" in str(e.orig) and ".name" in str(e.orig):
-            raise HTTPException(status_code=400, detail="名称已存在，请使用其他名称")
-        raise HTTPException(status_code=400, detail="创建失败：数据冲突")
+    await db.flush()
     await db.refresh(obj)
 
     if entity_type_norm in {"actor", "scene", "prop", "costume"}:

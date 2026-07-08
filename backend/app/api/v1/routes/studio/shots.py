@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models.studio_shots import ShotDetail
 from app.services.studio.shot_assets import (
     create_project_asset_link as create_project_asset_link_service,
     delete_project_asset_link as delete_project_asset_link_service,
@@ -62,7 +61,6 @@ from app.services.studio.generation.video import (
     derive_video_preview,
 )
 from app.services.studio.generation.video.derive_preview import to_shot_video_prompt_preview_read
-from app.services.studio.task_recovery import expire_stale_image_tasks
 from app.schemas.common import ApiResponse, PaginatedData, created_response, empty_response, success_response
 from app.schemas.skills.script_processing import StudioScriptExtractionDraft
 from app.services.studio.shot_extraction_draft import build_script_extraction_draft_for_shot
@@ -165,7 +163,6 @@ async def list_shot_runtime_summary(
     chapter_id: str = Query(..., description="章节 ID"),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[list[ShotRuntimeSummaryRead]]:
-    await expire_stale_image_tasks(db)
     rows = await list_shot_runtime_summary_by_chapter(db, chapter_id=chapter_id)
     return success_response(rows)
 
@@ -514,16 +511,7 @@ async def get_shot_detail(
     shot_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[ShotDetailRead]:
-    try:
-        obj = await get_shot_detail_service(db, shot_id=shot_id)
-    except HTTPException as exc:
-        if exc.status_code == 404:
-            obj = ShotDetail(id=shot_id)
-            db.add(obj)
-            await db.commit()
-            await db.refresh(obj)
-        else:
-            raise
+    obj = await get_shot_detail_service(db, shot_id=shot_id)
     return success_response(ShotDetailRead.model_validate(obj))
 
 

@@ -7,7 +7,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import settings
 from app.chains.agents import (
     ShotFirstFramePromptAgent,
     ShotKeyFramePromptAgent,
@@ -31,7 +30,6 @@ from app.models.studio import (
 )
 from app.services.llm.runtime import build_default_text_llm_sync
 from app.services.common import entity_not_found, invalid_choice
-from app.services.film.shot_frame_prompt_fallback import build_local_shot_frame_prompt
 from app.services.studio.action_beats import infer_action_beat_sequence, pick_action_beat_for_frame
 from app.services.studio.shot_status import recompute_shot_status
 from app.services.worker.async_task_support import cancel_if_requested_async
@@ -51,12 +49,6 @@ def relation_type_for_frame(frame_type: str) -> str:
     if frame_type == "last":
         return "shot_last_frame_prompt"
     return "shot_key_frame_prompt"
-
-
-def _allow_local_prompt_fallback() -> bool:
-    """仅在本地 SQLite 环境启用规则兜底。"""
-
-    return (settings.database_url or "").strip().lower().startswith("sqlite")
 
 
 def _enum_value(value: object | None) -> str:
@@ -815,27 +807,21 @@ async def run_shot_frame_prompt_task(
             else:
                 agent = ShotKeyFramePromptAgent(llm)
             input_dict.setdefault("retry_guidance", "")
-            try:
-                result = await agent.aextract(**input_dict)
-                quality_issues = _validate_generated_prompt(result.prompt, input_dict)
-                if quality_issues:
-                    retry_input = dict(input_dict)
-                    retry_input["retry_guidance"] = _build_retry_guidance(quality_issues)
-                    retry_result = await agent.aextract(**retry_input)
-                    retry_issues = _validate_generated_prompt(retry_result.prompt, retry_input)
-                    if not retry_issues:
-                        input_dict = retry_input
-                        result = retry_result
-                        quality_issues = []
-                    else:
-                        result.prompt = _cleanup_generated_prompt(retry_result.prompt) or _cleanup_generated_prompt(result.prompt) or result.prompt
-                        input_dict = retry_input
-                        quality_issues = retry_issues
-            except Exception:
-                if not _allow_local_prompt_fallback():
-                    raise
-                result = build_local_shot_frame_prompt(frame_type=frame_type, input_dict=input_dict)
-                quality_issues = []
+            result = await agent.aextract(**input_dict)
+            quality_issues = _validate_generated_prompt(result.prompt, input_dict)
+            if quality_issues:
+                retry_input = dict(input_dict)
+                retry_input["retry_guidance"] = _build_retry_guidance(quality_issues)
+                retry_result = await agent.aextract(**retry_input)
+                retry_issues = _validate_generated_prompt(retry_result.prompt, retry_input)
+                if not retry_issues:
+                    input_dict = retry_input
+                    result = retry_result
+                    quality_issues = []
+                else:
+                    result.prompt = _cleanup_generated_prompt(retry_result.prompt) or _cleanup_generated_prompt(result.prompt) or result.prompt
+                    input_dict = retry_input
+                    quality_issues = retry_issues
             if await cancel_if_requested_async(store=store, task_id=task_id, session=session):
                 log_task_event("shot_frame_prompt", task_id, "cancelled", stage="after_execute")
                 return

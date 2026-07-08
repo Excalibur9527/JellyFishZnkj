@@ -32,7 +32,7 @@ class VideoGenerationInput(BaseModel):
 
     character_references: Optional[list[str]] = Field(
         None,
-        description="角色人脸参考图列表（纯 base64 或 data URL）；传给 Kling Omni 时作为普通特征参考图",
+        description="角色人脸参考图列表（纯 base64 或 data URL）；传给 Kling 时作为 type=reference 锁定人脸",
     )
     camera_movement: Optional[str] = Field(
         None,

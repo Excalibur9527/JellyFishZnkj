@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Empty, Image, Input, Modal, Space, Tag, message, Pagination } from 'antd'
-import { DeleteOutlined, EditOutlined, LinkOutlined, PlusOutlined, UserOutlined } from '@ant-design/icons'
+import { Button, Card, Empty, Image, Input, Modal, Space, message, Pagination } from 'antd'
+import { EditOutlined, LinkOutlined, PlusOutlined, UserOutlined } from '@ant-design/icons'
 import { useParams, useNavigate } from 'react-router-dom'
 import { StudioShotLinksService } from '../../../../../services/generated'
 import type { ProjectActorLinkRead } from '../../../../../services/generated'
@@ -16,17 +16,6 @@ type ActorLike = {
   name: string
   description?: string | null
   thumbnail?: string
-  tags?: string[]
-}
-
-function getApiErrorDetail(error: unknown, fallback: string): string {
-  if (error && typeof error === 'object' && 'body' in error) {
-    const body = (error as { body?: { detail?: string; message?: string } }).body
-    if (typeof body?.detail === 'string' && body.detail.trim()) return body.detail
-    if (typeof body?.message === 'string' && body.message.trim()) return body.message
-  }
-  if (error instanceof Error && error.message.trim()) return error.message
-  return fallback
 }
 
 export function ActorsTab() {
@@ -41,7 +30,6 @@ export function ActorsTab() {
   const [search, setSearch] = useState('')
   const [linkingId, setLinkingId] = useState<string | null>(null)
   const [unlinkingId, setUnlinkingId] = useState<number | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [links, setLinks] = useState<ProjectActorLinkRead[]>([])
   const [linksLoading, setLinksLoading] = useState(false)
 
@@ -65,28 +53,14 @@ export function ActorsTab() {
     return Array.from(seen.values())
   }, [links])
 
-  const actorLinkByActorId = useMemo(() => {
-    const map = new Map<string, ProjectActorLinkRead & { allLinkIds: number[] }>()
-    uniqueLinks.forEach((link) => map.set(link.actor_id, link))
-    return map
-  }, [uniqueLinks])
-
-  const visibleActors = useMemo(() => {
-    const linkedActors = uniqueLinks
-      .map((link) => actors.find((actor) => actor.id === link.actor_id))
-      .filter(Boolean) as ActorLike[]
-    const unlinkedActors = actors.filter((actor) => !linkedActorIdSet.has(actor.id))
-    return [...linkedActors, ...unlinkedActors]
-  }, [actors, linkedActorIdSet, uniqueLinks])
-
-  const pagedActors = useMemo(() => {
+  const pagedLinks = useMemo(() => {
     const start = (page - 1) * pageSize
-    return visibleActors.slice(start, start + pageSize)
-  }, [visibleActors, page, pageSize])
+    return uniqueLinks.slice(start, start + pageSize)
+  }, [uniqueLinks, page, pageSize])
 
   useEffect(() => {
     setPage(1)
-  }, [visibleActors.length])
+  }, [uniqueLinks.length])
 
   const loadLinks = async () => {
     if (!projectId) return
@@ -131,11 +105,6 @@ export function ActorsTab() {
       setActorsLoading(false)
     }
   }
-
-  useEffect(() => {
-    void loadActors('')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId])
 
   useEffect(() => {
     if (linkModalOpen) void loadActors('')
@@ -190,18 +159,37 @@ export function ActorsTab() {
     }
   }
 
-  const handleDeleteActor = async (actor: ActorLike) => {
-    setDeletingId(actor.id)
-    try {
-      await StudioEntitiesApi.remove('actor', actor.id)
-      message.success(`已删除演员「${actor.name}」`)
-      await Promise.all([loadLinks(), loadActors('')])
-    } catch (error) {
-      message.error(getApiErrorDetail(error, '删除失败'))
-    } finally {
-      setDeletingId(null)
-    }
-  }
+  const linkedByActorId = useMemo(() => {
+    const map = new Map<string, ActorLike>()
+    actors.forEach((a) => map.set(a.id, a))
+    return map
+  }, [actors])
+
+  useEffect(() => {
+    // 为表格展示补齐 actor 详情（name/thumbnail/description）
+    const missing = Array.from(new Set(links.map((l) => l.actor_id))).filter((id) => !linkedByActorId.has(id))
+    if (missing.length === 0) return
+    void (async () => {
+      try {
+        const res = await StudioEntitiesApi.list('actor', {
+          page: 1,
+          pageSize: 100,
+          q: null,
+          order: null,
+          isDesc: false,
+        })
+        const items = (res.data?.items ?? []) as ActorLike[]
+        setActors((prev) => {
+          const map = new Map(prev.map((a) => [a.id, a]))
+          items.forEach((a) => map.set(a.id, a))
+          return Array.from(map.values())
+        })
+      } catch {
+        // ignore
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [links])
 
   const availableActors = useMemo(
     () => actors.filter((a) => !linkedActorIdSet.has(a.id)),
@@ -235,8 +223,8 @@ export function ActorsTab() {
           </Space>
         }
       >
-        {visibleActors.length === 0 && !linksLoading && !actorsLoading ? (
-          <Empty description="暂无演员资产，可先新建或从资产库补充" image={Empty.PRESENTED_IMAGE_SIMPLE}>
+        {uniqueLinks.length === 0 && !linksLoading ? (
+          <Empty description="暂无项目演员，可从资产库关联演员到本项目" image={Empty.PRESENTED_IMAGE_SIMPLE}>
             <Space>
               <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
                 新建
@@ -257,22 +245,14 @@ export function ActorsTab() {
         ) : (
           <div className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {pagedActors.map((actor) => {
-              const link = actorLinkByActorId.get(actor.id)
-              const isLinked = Boolean(link)
+            {pagedLinks.map((l) => {
+              const a = linkedByActorId.get(l.actor_id)
               return (
                 <DisplayImageCard
-                  key={actor.id}
-                  title={
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="truncate">{actor.name}</div>
-                      <Tag color={isLinked ? 'green' : 'default'} className="shrink-0">
-                        {isLinked ? '已关联' : '未关联'}
-                      </Tag>
-                    </div>
-                  }
-                  imageUrl={resolveAssetUrl(actor.thumbnail)}
-                  imageAlt={actor.name}
+                  key={l.actor_id}
+                  title={<div className="truncate">{a?.name ?? l.actor_id}</div>}
+                  imageUrl={resolveAssetUrl(a?.thumbnail)}
+                  imageAlt={a?.name ?? l.actor_id}
                   extra={
                     <Space size="small">
                       <Button
@@ -281,83 +261,34 @@ export function ActorsTab() {
                         icon={<EditOutlined />}
                         onClick={() =>
                           navigate(
-                            `/assets/actors/${actor.id}/edit?returnTo=${encodeWorkbenchAssetEditReturnTo(projectId, 'actors')}`,
+                            `/assets/actors/${l.actor_id}/edit?returnTo=${encodeWorkbenchAssetEditReturnTo(projectId, 'actors')}`,
                           )
                         }
                       >
                         编辑
                       </Button>
-                      {isLinked && link ? (
-                        <>
-                          <Button
-                            size="small"
-                            danger
-                            loading={unlinkingId === link.id}
-                            onClick={() => {
-                              Modal.confirm({
-                                title: `从当前项目移除「${actor.name}」？`,
-                                okText: '从项目移除',
-                                cancelText: '取消',
-                                okButtonProps: { danger: true },
-                                onOk: () => handleUnlinkActor(link),
-                              })
-                            }}
-                          >
-                            从项目移除
-                          </Button>
-                          <Button
-                            size="small"
-                            icon={<DeleteOutlined />}
-                            loading={deletingId === actor.id}
-                            onClick={() => {
-                              Modal.confirm({
-                                title: `彻底删除演员「${actor.name}」？`,
-                                content: '这会删除演员资产本体，不是仅从当前项目移除。',
-                                okText: '彻底删除',
-                                cancelText: '取消',
-                                okButtonProps: { danger: true },
-                                onOk: () => handleDeleteActor(actor),
-                              })
-                            }}
-                          >
-                            彻底删除
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button
-                            type="primary"
-                            size="small"
-                            loading={linkingId === actor.id}
-                            onClick={() => handleLinkActor(actor)}
-                          >
-                            关联到项目
-                          </Button>
-                          <Button
-                            size="small"
-                            icon={<DeleteOutlined />}
-                            loading={deletingId === actor.id}
-                            onClick={() => {
-                              Modal.confirm({
-                                title: `彻底删除演员「${actor.name}」？`,
-                                content: '这会删除演员资产本体，不是仅从当前项目移除。',
-                                okText: '彻底删除',
-                                cancelText: '取消',
-                                okButtonProps: { danger: true },
-                                onOk: () => handleDeleteActor(actor),
-                              })
-                            }}
-                          >
-                            彻底删除
-                          </Button>
-                        </>
-                      )}
+                      <Button
+                        size="small"
+                        danger
+                        loading={unlinkingId === l.id}
+                        onClick={() => {
+                          Modal.confirm({
+                            title: `取消关联「${a?.name ?? l.actor_id}」？`,
+                            okText: '取消关联',
+                            cancelText: '取消',
+                            okButtonProps: { danger: true },
+                            onOk: () => handleUnlinkActor(l),
+                          })
+                        }}
+                      >
+                        取消关联
+                      </Button>
                     </Space>
                   }
                   meta={
                     <div className="space-y-1">
-                      <div className="text-xs text-gray-600 line-clamp-2">{actor.description ?? '—'}</div>
-                      <div className="text-xs text-gray-500 truncate">actor_id：{actor.id}</div>
+                      <div className="text-xs text-gray-600 line-clamp-2">{a?.description ?? '—'}</div>
+                      <div className="text-xs text-gray-500 truncate">actor_id：{l.actor_id}</div>
                     </div>
                   }
                 />
@@ -368,7 +299,7 @@ export function ActorsTab() {
               <Pagination
                 current={page}
                 pageSize={pageSize}
-                total={visibleActors.length}
+                total={uniqueLinks.length}
                 showSizeChanger={false}
                 showTotal={(t) => `共 ${t} 条`}
                 onChange={(p, ps) => {
@@ -455,3 +386,4 @@ export function ActorsTab() {
     </div>
   )
 }
+

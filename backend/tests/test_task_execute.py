@@ -127,7 +127,6 @@ def test_enqueue_task_execution_records_executor(monkeypatch, tmp_path) -> None:
         db.commit()
 
     monkeypatch.setattr(execute_task_module, "sync_session_maker", sync_session_local)
-    monkeypatch.setattr(execute_task_module.settings, "task_execution_mode", "celery")
     monkeypatch.setattr(
         execute_task_module.run_task_celery,
         "delay",
@@ -142,60 +141,6 @@ def test_enqueue_task_execution_records_executor(monkeypatch, tmp_path) -> None:
         assert row is not None
         assert row.executor_type == "celery"
         assert row.executor_task_id == "celery-task-2"
-
-    sync_engine.dispose()
-
-
-def test_enqueue_task_execution_uses_local_thread_in_local_mode(monkeypatch, tmp_path) -> None:
-    db_path = tmp_path / "task-enqueue-local.db"
-    sync_engine = create_engine(f"sqlite:///{db_path}", future=True)
-    sync_session_local = sessionmaker(sync_engine, class_=Session, expire_on_commit=False)
-
-    import app.models.task  # noqa: F401
-
-    Base.metadata.create_all(sync_engine)
-    with sync_session_local() as db:
-        db.add(
-            GenerationTask(
-                id="task-local",
-                mode="async_polling",
-                task_kind="script_divide",
-                status="pending",
-                progress=0,
-                payload={"task_kind": "script_divide", "run_args": {}},
-                result=None,
-                error="",
-            )
-        )
-        db.commit()
-
-    started: list[tuple[str, tuple[str, ...], str, bool]] = []
-
-    class _FakeThread:
-        """模拟本地线程执行，验证入口选择与回写信息。"""
-
-        def __init__(self, target, args, name: str, daemon: bool) -> None:  # noqa: ANN001
-            self._target = target
-            self._args = args
-            self.name = name
-            self.daemon = daemon
-
-        def start(self) -> None:
-            started.append((self.name, self._args, self._target.__name__, self.daemon))
-
-    monkeypatch.setattr(execute_task_module, "sync_session_maker", sync_session_local)
-    monkeypatch.setattr(execute_task_module, "Thread", _FakeThread)
-    monkeypatch.setattr(execute_task_module.settings, "task_execution_mode", "local")
-
-    result = execute_task_module.enqueue_task_execution("task-local")
-    assert result.id == "local-task-task-loc"
-    assert started == [("local-task-task-loc", ("task-local",), "run_task_celery", True)]
-
-    with sync_session_local() as db:
-        row = db.get(GenerationTask, "task-local")
-        assert row is not None
-        assert row.executor_type == "local_thread"
-        assert row.executor_task_id == "local-task-task-loc"
 
     sync_engine.dispose()
 
@@ -239,38 +184,6 @@ def test_revoke_task_execution_revokes_celery_task(monkeypatch, tmp_path) -> Non
 
     assert execute_task_module.revoke_task_execution("task-revoke") is True
     assert calls == [("celery-task-revoke", True, "SIGTERM")]
-
-    sync_engine.dispose()
-
-
-def test_revoke_task_execution_returns_false_for_local_thread(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "task-revoke-local.db"
-    sync_engine = create_engine(f"sqlite:///{db_path}", future=True)
-    sync_session_local = sessionmaker(sync_engine, class_=Session, expire_on_commit=False)
-
-    import app.models.task  # noqa: F401
-
-    Base.metadata.create_all(sync_engine)
-    with sync_session_local() as db:
-        db.add(
-            GenerationTask(
-                id="task-local-revoke",
-                mode="async_polling",
-                task_kind="script_divide",
-                status="running",
-                progress=30,
-                payload={"task_kind": "script_divide", "run_args": {}},
-                result=None,
-                error="",
-                executor_type="local_thread",
-                executor_task_id="local-task-task-loc",
-            )
-        )
-        db.commit()
-
-    monkeypatch.setattr(execute_task_module, "sync_session_maker", sync_session_local)
-
-    assert execute_task_module.revoke_task_execution("task-local-revoke") is False
 
     sync_engine.dispose()
 
