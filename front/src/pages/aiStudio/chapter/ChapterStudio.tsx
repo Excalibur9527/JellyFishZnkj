@@ -4151,20 +4151,24 @@ function Inspector(props: {
   const keyframePromptRenderMappings = keyframePromptDraft.derived?.mappings ?? []
   const keyframePromptPreviewRefFileIds = keyframePromptDraft.context.refFileIds
   const keyframePromptRenderState = keyframePromptDraft.state
+
+  const keyframePromptDraftRef = useRef(keyframePromptDraft)
+  keyframePromptDraftRef.current = keyframePromptDraft
   const renderShotPromptToTextarea = useCallback(
     async (opts?: { frameType?: PromptFrameType; prompt?: string; refFileIds?: string[]; showPreviewLoading?: boolean }) => {
       if (!selectedShot?.id) return
+      const draft = keyframePromptDraftRef.current
       const frameType = opts?.frameType ?? keyframePromptPreviewFrameType
-      const basePrompt = (typeof opts?.prompt === 'string' ? opts.prompt : keyframePromptPreviewDraft || '').trim()
-      const refFileIds = (opts?.refFileIds ?? keyframePromptPreviewRefFileIds ?? []).filter(Boolean)
+      const basePrompt = (typeof opts?.prompt === 'string' ? opts.prompt : '').trim()
+      const refFileIds = (opts?.refFileIds ?? []).filter(Boolean)
       const nextBase = { frameType, prompt: basePrompt }
       const nextContext = { refFileIds }
-      keyframePromptDraft.hydrate({
-        base: nextBase,
-        context: nextContext,
-        state: basePrompt ? 'draft_changed' : 'idle',
-      })
       if (!basePrompt) {
+        draft.hydrate({
+          base: nextBase,
+          context: nextContext,
+          state: 'idle',
+        })
         return
       }
       setShotRenderPromptLoading(true)
@@ -4172,9 +4176,9 @@ function Inspector(props: {
         setKeyframePromptPreviewLoading(true)
       }
       try {
-        const derived = await keyframePromptDraft.deriveNow({ base: nextBase, context: nextContext })
+        const derived = await draft.deriveNow({ base: nextBase, context: nextContext })
         if (derived?.images?.length) {
-          keyframePromptDraft.hydrate({
+          draft.hydrate({
             base: nextBase,
             context: { refFileIds: derived.images },
             derived: {
@@ -4184,7 +4188,7 @@ function Inspector(props: {
           })
         }
       } catch {
-        keyframePromptDraft.setState('error')
+        draft.setState('error')
       } finally {
         if (opts?.showPreviewLoading) {
           setKeyframePromptPreviewLoading(false)
@@ -4193,11 +4197,7 @@ function Inspector(props: {
       }
     },
     [
-      keyframePromptDraft,
-      keyframeResolutionProfile,
-      keyframePromptPreviewDraft,
       keyframePromptPreviewFrameType,
-      keyframePromptPreviewRefFileIds,
       selectedShot?.id,
     ],
   )
