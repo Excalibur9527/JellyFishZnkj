@@ -85,10 +85,12 @@ _CAMERA_CONTROL_MAP: dict[str, dict[str, Any]] = {
 
 async def _build_body(input_: VideoGenerationInput) -> dict[str, Any]:
     duration = _DURATION_MAP.get(input_.seconds or 5, _DEFAULT_DURATION)
-    prompt = (input_.prompt or "").strip()
-    # 可灵 API 限制 prompt 最多 2500 字符
-    if len(prompt) > 2000:
-        prompt = prompt[:2000]
+    # 可灵 API 限制 prompt 按 UTF-8 字节计算不超过 2500
+    raw_prompt = (input_.prompt or "").strip()
+    prompt_bytes = raw_prompt.encode("utf-8")
+    if len(prompt_bytes) > 2500:
+        prompt_bytes = prompt_bytes[:2500]
+    prompt = prompt_bytes.decode("utf-8", errors="ignore")
     logger.info("KlingProxy prompt: len=%d bytes=%d", len(prompt), len(prompt.encode('utf-8')))
     body: dict[str, Any] = {
         "model_name": (input_.model or "kling-video-o1").strip(),
