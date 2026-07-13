@@ -210,8 +210,8 @@ async def build_run_args(
     }
     if character_references:
         input_dict["character_references"] = character_references
-    if shot_detail.camera_movement:
-        input_dict["camera_movement"] = str(shot_detail.camera_movement.value if hasattr(shot_detail.camera_movement, 'value') else shot_detail.camera_movement)
+    if shot_detail.movement:
+        input_dict["camera_movement"] = str(shot_detail.movement.value if hasattr(shot_detail.movement, 'value') else shot_detail.movement)
 
     run_args = {
         "shot_id": shot_id,
