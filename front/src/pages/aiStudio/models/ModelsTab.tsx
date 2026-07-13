@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { generateUUID } from '../../../utils/uuid'
 import {
   Alert,
   Layout,
@@ -207,9 +208,7 @@ export default function ModelsTab() {
           return
         }
         const modelId =
-          typeof crypto !== 'undefined' && crypto.randomUUID
-            ? crypto.randomUUID()
-            : `model_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+          generateUUID()
         await LlmService.createModelApiV1LlmModelsPost({
           requestBody: {
             id: modelId,
