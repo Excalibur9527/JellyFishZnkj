@@ -274,7 +274,7 @@ type KeyframeCardState = {
 
 type KeyframeResolutionProfile = 'standard' | 'high'
 
-type InspectorTabKey = 'ops' | 'camera' | 'prompt_image' | 'dialogue' | 'keyframe_gen' | 'gen_ref'
+type InspectorTabKey = 'ops' | 'camera' | 'prompt_image' | 'dialogue' | 'keyframe_gen' | 'gen_ref' | 'av'
 
 const LAYOUT_STORAGE_KEY = 'jellyfish_chapter_studio_layout_v1'
 type PromptFrameType = 'first' | 'key' | 'last'
@@ -323,6 +323,12 @@ function hasUsableFrameImage(frameImages: ShotFrameImageRead[], frameType: Promp
  * 工作室仍然保留关键帧、提示词、诊断等高级页签；这个函数只负责把
  * 分散在准备状态、帧图、视频、音频里的信号整理成“现在最该点什么”。
  */
+type ShotAudioClipRead = {
+  id: string
+  file_id?: string | null
+  text?: string | null
+}
+
 function buildCreatorWorkflowState(args: {
   selectedShot: StudioShot | null
   frameImages: ShotFrameImageRead[]
@@ -3197,6 +3203,12 @@ function Inspector(props: {
   const [refFrameTypeSelectLoading, setRefFrameTypeSelectLoading] = useState(false)
   const [useBoneDepth, setUseBoneDepth] = useState(false)
   const [audioMode, setAudioMode] = useState<'none' | 'prompt' | 'upload'>('none')
+  // Audio/TTS 功能尚未接入，以下为占位定义，避免运行时 ReferenceError
+  const shotAudioClips: ShotAudioClipRead[] = []
+  const ttsGenerating = false
+  const audioMuxing = false
+  const onGenerateShotTts = () => {}
+  const onMuxShotAudio = () => {}
   const [hideShot, setHideShot] = useState(false)
   const [inspectorTabKey, setInspectorTabKey] = useState<InspectorTabKey>('camera')
   const [sceneNameMap, setSceneNameMap] = useState<Record<string, string>>({})

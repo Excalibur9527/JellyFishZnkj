@@ -14,10 +14,11 @@ import {
   Spin,
   Tag,
   Typography,
+  Upload,
   message,
 } from 'antd'
-import { ArrowLeftOutlined, CloseCircleOutlined, EditOutlined, ReloadOutlined } from '@ant-design/icons'
-import { FilmService, ScriptProcessingService } from '../../../../services/generated'
+import { ArrowLeftOutlined, CloseCircleOutlined, EditOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
+import { FilmService, ScriptProcessingService, StudioFilesService } from '../../../../services/generated'
 import type { TaskStatus } from '../../../../services/generated'
 import { listTaskLinksNormalized } from '../../../../services/filmTaskLinks'
 import { buildFileDownloadUrl } from '../utils'
@@ -228,6 +229,13 @@ export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseA
   const [savingBase, setSavingBase] = useState(false)
 
   const [formVisualFingerprint, setFormVisualFingerprint] = useState('')
+
+  // 声线设置相关状态（TTS 功能尚未完全接入）
+  const [formVoiceName, setFormVoiceName] = useState('')
+  const [formVoiceRate, setFormVoiceRate] = useState<number | null>(null)
+  const [formVoiceSampleFileId, setFormVoiceSampleFileId] = useState('')
+  const [formVoiceSampleFileName, setFormVoiceSampleFileName] = useState('')
+  const [voiceSampleUploading, setVoiceSampleUploading] = useState(false)
 
   const [smartDetectLoading, setSmartDetectLoading] = useState(false)
   const [smartDetectOpen, setSmartDetectOpen] = useState(false)
