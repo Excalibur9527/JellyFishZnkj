@@ -9,7 +9,7 @@ COPY front/package.json front/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY front/ ./
-RUN pnpm rebuild esbuild && pnpm exec vite build
+RUN pnpm exec vite build
 
 
 FROM nginx:1.27-alpine AS runtime
