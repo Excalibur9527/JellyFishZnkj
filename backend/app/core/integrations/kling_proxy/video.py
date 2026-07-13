@@ -87,7 +87,7 @@ async def _build_body(input_: VideoGenerationInput) -> dict[str, Any]:
     duration = _DURATION_MAP.get(input_.seconds or 5, _DEFAULT_DURATION)
     body: dict[str, Any] = {
         "model_name": (input_.model or "kling-video-o1").strip(),
-        "prompt": (input_.prompt or "").strip(),
+        "prompt": (input_.prompt or "").strip()[:2500],
         "duration": duration,
         "mode": "std",
     }
