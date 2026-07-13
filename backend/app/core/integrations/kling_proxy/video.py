@@ -114,9 +114,10 @@ async def _build_body(input_: VideoGenerationInput) -> dict[str, Any]:
         b64 = _compress_to_b64(input_.last_frame_base64)
         image_list.append({"image_url": b64, "type": "end_frame"})
 
-    for ref_b64 in (input_.character_references or []):
-        b64 = _compress_to_b64(ref_b64)
-        image_list.append({"image_url": b64, "type": "reference"})
+    # 可灵 omni-video 接口不支持 reference 类型，角色参考图跳过
+    # for ref_b64 in (input_.character_references or []):
+    #     b64 = _compress_to_b64(ref_b64)
+    #     image_list.append({"image_url": b64, "type": "reference"})
 
     if image_list:
         body["image_list"] = image_list
