@@ -89,6 +89,7 @@ import type {
   ShotExtractedDialogueCandidateRead,
   ShotAssetsOverviewRead,
   ShotFrameImageRead,
+  ShotLinkedAssetItem,
   ShotCharacterLinkRead,
   ProjectPropLinkRead,
   ShotFramePromptMappingRead,
@@ -4008,6 +4009,27 @@ function Inspector(props: {
     return map
   }, [extractFileIdFromThumbnail, shotLinkedAssets])
 
+  const resolveLinkedAssetItemsFromFileIds = useCallback((refFileIds: string[]): ShotLinkedAssetItem[] => {
+    const items: ShotLinkedAssetItem[] = []
+    refFileIds.forEach((fid) => {
+      const fileId = String(fid || '').trim()
+      if (!fileId) return
+      const match =
+        shotLinkedAssets.find((x) => extractFileIdFromThumbnail(x.thumbnail ?? null) === fileId) ??
+        shotLinkedAssets.find((x) => (x as any)?.file_id === fileId)
+      if (!match) return
+      items.push({
+        type: match.type as ShotLinkedAssetItem['type'],
+        id: String(match.id),
+        image_id: typeof (match as any).image_id === 'number' ? (match as any).image_id : null,
+        file_id: fileId,
+        name: String(match.name ?? match.id),
+        thumbnail: String(match.thumbnail ?? ''),
+      })
+    })
+    return items
+  }, [extractFileIdFromThumbnail, shotLinkedAssets])
+
   const deriveKeyframePromptPreview = useCallback(
     async ({
       base,
@@ -4034,21 +4056,7 @@ function Inspector(props: {
         }
       }
 
-      const imagesPayload = refFileIds
-        .map((fid) => {
-          const match =
-            shotLinkedAssets.find((x) => extractFileIdFromThumbnail(x.thumbnail ?? null) === fid) ??
-            shotLinkedAssets.find((x) => (x as any)?.file_id === fid)
-          return match
-            ? {
-                type: match.type as any,
-                id: match.id,
-                name: match.name ?? match.id,
-                file_id: fid,
-              }
-            : null
-        })
-        .filter(Boolean)
+      const imagesPayload = resolveLinkedAssetItemsFromFileIds(refFileIds)
 
       const rendered = await StudioImageTasksService.renderShotFramePromptApiV1StudioImageTasksShotShotIdFrameRenderPromptPost({
         shotId: selectedShot.id,
@@ -4092,7 +4100,7 @@ function Inspector(props: {
         mappings: Array.isArray(d?.mappings) ? (d.mappings as ShotFramePromptMappingRead[]) : [],
       }
     },
-    [extractFileIdFromThumbnail, selectedShot?.id, shotLinkedAssets],
+    [resolveLinkedAssetItemsFromFileIds, selectedShot?.id],
   )
 
   const keyframePromptDraft = useGenerationDraft<
@@ -4116,17 +4124,7 @@ function Inspector(props: {
               name: mapping.name,
               file_id: mapping.file_id,
             }))
-          : (context.refFileIds || []).map((fid) => {
-              const match =
-                shotLinkedAssets.find((x) => extractFileIdFromThumbnail(x.thumbnail ?? null) === fid) ??
-                shotLinkedAssets.find((x) => (x as any)?.file_id === fid)
-              return {
-                type: (match?.type as any) ?? 'character',
-                id: match?.id ?? fid,
-                name: match?.name ?? match?.id ?? fid,
-                file_id: fid,
-              }
-            })
+          : resolveLinkedAssetItemsFromFileIds(context.refFileIds || [])
 
       const ratio = resolveVideoRatioForRequest()
       if (!ratio) {
@@ -4199,8 +4197,10 @@ function Inspector(props: {
             },
           })
         }
+        return derived
       } catch {
         draft.setState('error')
+        return null
       } finally {
         if (opts?.showPreviewLoading) {
           setKeyframePromptPreviewLoading(false)
@@ -4252,12 +4252,45 @@ function Inspector(props: {
     orderedLinkedCharacterIds,
   ])
 
+  const getFrameReferenceFileIds = useCallback((frameType: PromptFrameType): string[] => {
+    const slot = frameImages.find((x) => x.frame_type === frameType)
+    const referenceAssets = (slot as any)?.reference_assets
+    const saved = Array.isArray(referenceAssets)
+      ? referenceAssets
+          .map((item: any) => String(item?.file_id ?? '').trim())
+          .filter(Boolean)
+      : []
+    return saved.length > 0 ? saved : autoKeyframeRefFileIds
+  }, [autoKeyframeRefFileIds, frameImages])
+
+  const persistKeyframePromptRefFiles = useCallback(async (frameType: PromptFrameType, refFileIds: string[]) => {
+    const slot = frameImages.find((x) => x.frame_type === frameType)
+    if (!slot) return
+    await StudioShotFrameImagesService.updateShotFrameImageApiV1StudioShotFrameImagesImageIdPatch({
+      imageId: slot.id,
+      requestBody: {
+        reference_assets: resolveLinkedAssetItemsFromFileIds(refFileIds),
+      } as any,
+    })
+    await onRefreshShotFrameImages?.()
+  }, [frameImages, onRefreshShotFrameImages, resolveLinkedAssetItemsFromFileIds])
+
   const moveKeyframePromptRefFile = useCallback((fromIndex: number, toIndex: number) => {
     const current = keyframePromptPreviewRefFileIds
     if (fromIndex < 0 || toIndex < 0 || fromIndex >= current.length || toIndex >= current.length) return
     const next = reorder(current, fromIndex, toIndex)
     keyframePromptDraft.setContext({ refFileIds: next })
-  }, [keyframePromptDraft, keyframePromptPreviewRefFileIds])
+    keyframePromptDraft.setDerived(null)
+    keyframePromptDraft.setState('context_changed')
+    void persistKeyframePromptRefFiles(keyframePromptPreviewFrameType, next).catch(() => {
+      message.error('参考图顺序保存失败')
+    })
+  }, [
+    keyframePromptDraft,
+    keyframePromptPreviewFrameType,
+    keyframePromptPreviewRefFileIds,
+    persistKeyframePromptRefFiles,
+  ])
 
   const loadProjectRoleOptions = async () => {
     if (!projectId) {
@@ -4729,9 +4762,10 @@ function Inspector(props: {
       setKeyframeDirectiveCollapsed(true)
       setKeyframePromptDecisionCollapsed(true)
       const basePrompt = getPromptFromDetailByType(frameType)
+      const refFileIds = getFrameReferenceFileIds(frameType)
       keyframePromptDraft.hydrate({
         base: { frameType, prompt: basePrompt },
-        context: { refFileIds: autoKeyframeRefFileIds },
+        context: { refFileIds },
         state: basePrompt.trim() ? 'draft_changed' : 'idle',
       })
       setKeyframePromptDebugContext(null)
@@ -4741,7 +4775,7 @@ function Inspector(props: {
         void renderShotPromptToTextarea({
           frameType,
           prompt: basePrompt,
-          refFileIds: autoKeyframeRefFileIds,
+          refFileIds,
           showPreviewLoading: true,
         })
       } else {
@@ -4870,35 +4904,14 @@ function Inspector(props: {
     // 弹窗打开时，若当前没有参考图，则自动填充为分镜关联实体的参考图
     if (!keyframePromptPreviewOpen) return
     if (keyframePromptPreviewRefFileIds.length > 0) return
-    if (autoKeyframeRefFileIds.length === 0) return
-    keyframePromptDraft.setContext({ refFileIds: autoKeyframeRefFileIds })
-  }, [autoKeyframeRefFileIds, keyframePromptPreviewOpen, keyframePromptPreviewRefFileIds.length])
-
-  useEffect(() => {
-    if (!keyframePromptPreviewOpen) return
-    if (mapGenerationDraftStateToRenderState(keyframePromptRenderState) !== 'stale') return
-    const basePrompt = (keyframePromptPreviewDraft || '').trim()
-    if (!basePrompt) return
-    const refFileIds =
-      keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds
-    const timer = window.setTimeout(() => {
-      void renderShotPromptToTextarea({
-        frameType: keyframePromptPreviewFrameType,
-        prompt: basePrompt,
-        refFileIds,
-      })
-    }, 400)
-    return () => {
-      window.clearTimeout(timer)
-    }
+    const refFileIds = getFrameReferenceFileIds(keyframePromptPreviewFrameType)
+    if (refFileIds.length === 0) return
+    keyframePromptDraft.setContext({ refFileIds })
   }, [
-    autoKeyframeRefFileIds,
-    keyframePromptPreviewDraft,
+    getFrameReferenceFileIds,
     keyframePromptPreviewFrameType,
     keyframePromptPreviewOpen,
-    keyframePromptPreviewRefFileIds,
-    keyframePromptRenderState,
-    renderShotPromptToTextarea,
+    keyframePromptPreviewRefFileIds.length,
   ])
 
   const confirmGenerateKeyframeWithPrompt = async () => {
@@ -4916,7 +4929,19 @@ function Inspector(props: {
     setKeyframePromptActionLoading(true)
     updateCardState(frameType, { loading: true, taskStatus: 'pending', taskId: null })
     try {
-      const refFileIds = keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds
+      const refFileIds = keyframePromptPreviewRefFileIds.length > 0
+        ? keyframePromptPreviewRefFileIds
+        : getFrameReferenceFileIds(frameType)
+      const derived = await renderShotPromptToTextarea({
+        frameType,
+        prompt: basePrompt,
+        refFileIds,
+      })
+      if (!derived?.renderedPrompt?.trim()) {
+        message.error('最终提示词同步失败，暂不发起图片生成')
+        updateCardState(frameType, { loading: false, taskStatus: 'failed' })
+        return
+      }
       keyframePromptDraft.replaceContext({ refFileIds })
       const submitted = await keyframePromptDraft.submitNow()
       const taskId = submitted?.taskId
@@ -6308,9 +6333,8 @@ function Inspector(props: {
                     value={keyframePromptPreviewDraft}
                     onChange={(e) => {
                       keyframePromptDraft.setBase((prev) => ({ ...prev, prompt: e.target.value }))
-                      if (!e.target.value.trim()) {
-                        keyframePromptDraft.resetDerived()
-                      }
+                      keyframePromptDraft.setDerived(null)
+                      keyframePromptDraft.setState(e.target.value.trim() ? 'draft_changed' : 'idle')
                     }}
                     placeholder="请输入基础提示词，例如人物动作、场景氛围、镜头视角等…"
                     disabled={keyframePromptActionLoading || shotRenderPromptLoading}
@@ -6581,7 +6605,7 @@ function Inspector(props: {
                     <div>
                       <div className="text-sm font-medium text-slate-900">最终生成提示词</div>
                       <div className="mt-1 text-xs text-slate-500">
-                        系统会根据当前基础提示词和参考图顺序自动生成这一版内容，提交给模型时将使用这里的结果。
+                        点击同步后，系统会根据当前基础提示词和参考图顺序生成这一版内容。
                       </div>
                     </div>
                     <Space size="small">

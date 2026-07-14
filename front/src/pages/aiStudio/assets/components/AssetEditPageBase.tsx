@@ -163,40 +163,6 @@ function getAssetNavigateRelationType(relationType: string): string | null {
   return null
 }
 
-function readVoiceProfileString(profile: Record<string, unknown> | null | undefined, key: string): string {
-  const localSay = profile?.local_say
-  const source = localSay && typeof localSay === 'object' && !Array.isArray(localSay)
-    ? (localSay as Record<string, unknown>)
-    : (profile ?? {})
-  const value = source[key]
-  return typeof value === 'string' ? value : ''
-}
-
-function readVoiceProfileNumber(profile: Record<string, unknown> | null | undefined, key: string): number | null {
-  const localSay = profile?.local_say
-  const source = localSay && typeof localSay === 'object' && !Array.isArray(localSay)
-    ? (localSay as Record<string, unknown>)
-    : (profile ?? {})
-  const value = source[key]
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value)
-  return null
-}
-
-function buildVoiceProfilePayload(opts: {
-  voice: string
-  rate: number | null
-  sampleFileId: string
-  sampleFileName: string
-}): Record<string, unknown> {
-  const localSay: Record<string, unknown> = {}
-  if (opts.voice.trim()) localSay.voice = opts.voice.trim()
-  if (opts.rate !== null) localSay.rate = opts.rate
-  if (opts.sampleFileId.trim()) localSay.sample_file_id = opts.sampleFileId.trim()
-  if (opts.sampleFileName.trim()) localSay.sample_file_name = opts.sampleFileName.trim()
-  return { local_say: localSay }
-}
-
 export function AssetEditPageBase<TAsset extends BaseAsset, TImage extends BaseAssetImage>({
   assetId,
   missingAssetIdText,
