@@ -4260,7 +4260,9 @@ function Inspector(props: {
           .map((item: any) => String(item?.file_id ?? '').trim())
           .filter(Boolean)
       : []
-    return saved.length > 0 ? saved : autoKeyframeRefFileIds
+    // Saved frame-level snapshots preserve user ordering, while current shot links keep
+    // newly linked characters/scenes/props/costumes from being dropped by stale snapshots.
+    return Array.from(new Set([...saved, ...autoKeyframeRefFileIds]))
   }, [autoKeyframeRefFileIds, frameImages])
 
   const persistKeyframePromptRefFiles = useCallback(async (frameType: PromptFrameType, refFileIds: string[]) => {
@@ -4890,7 +4892,7 @@ function Inspector(props: {
       await renderShotPromptToTextarea({
         frameType,
         prompt: generatedPrompt,
-        refFileIds: keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : autoKeyframeRefFileIds,
+        refFileIds: keyframePromptPreviewRefFileIds.length > 0 ? keyframePromptPreviewRefFileIds : getFrameReferenceFileIds(frameType),
       })
       message.success('提示词已生成')
     } catch {
@@ -6620,7 +6622,7 @@ function Inspector(props: {
                             refFileIds:
                               keyframePromptPreviewRefFileIds.length > 0
                                 ? keyframePromptPreviewRefFileIds
-                                : autoKeyframeRefFileIds,
+                                : getFrameReferenceFileIds(keyframePromptPreviewFrameType),
                           })
                         }
                         disabled={!hasBasePrompt}
