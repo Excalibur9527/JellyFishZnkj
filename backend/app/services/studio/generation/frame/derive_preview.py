@@ -363,10 +363,64 @@ def compose_shot_frame_rendered_prompt(
         lines.append("## 图片内容说明")
         for mapping in mappings:
             lines.append(f"{mapping.token}: {mapping.name}")
+        binding_lines = _build_reference_binding_lines(mappings)
+        if binding_lines:
+            lines.append("")
+            lines.append("## 参考图绑定硬约束")
+            lines.extend(binding_lines)
         lines.append("")
     lines.append("## 生成内容")
     lines.append((replaced_prompt or "").strip())
     return "\n".join(lines).strip()
+
+
+def _build_reference_binding_lines(mappings: list[ShotFramePromptMappingRead]) -> list[str]:
+    """根据图片映射生成角色、服装、场景和道具的使用约束。
+
+    图片供应商通常只接收图片数组，无法给单张参考图附带结构化名称。因此这里把
+    角色图、服装图和其他资产图的职责写进最终 prompt，避免模型把红色服装套到
+    需要绿色/唐朝婚服的角色身上，或误把服装模特当成角色身份。
+    """
+
+    characters = [mapping for mapping in mappings if mapping.type == "character"]
+    costumes = [mapping for mapping in mappings if mapping.type == "costume"]
+    props = [mapping for mapping in mappings if mapping.type == "prop"]
+    scenes = [mapping for mapping in mappings if mapping.type == "scene"]
+    lines: list[str] = []
+    if characters:
+        character_refs = "、".join(f"{item.token}（{item.name}）" for item in characters)
+        lines.append(f"人物身份和脸部以{character_refs}为准。")
+    if costumes:
+        costume_refs = "、".join(f"{item.token}（{item.name}）" for item in costumes)
+        lines.append(f"服装颜色、款式、纹样和层次以{costume_refs}为准；服装图只作为服装参考，不作为人物身份参考。")
+    if scenes:
+        scene_refs = "、".join(f"{item.token}（{item.name}）" for item in scenes)
+        lines.append(f"场景空间和环境陈设以{scene_refs}为准。")
+    if props:
+        prop_refs = "、".join(f"{item.token}（{item.name}）" for item in props)
+        lines.append(f"道具形态以{prop_refs}为准。")
+
+    for character in characters:
+        linked_costumes = [
+            costume
+            for costume in costumes
+            if character.name and character.name in costume.name
+        ]
+        if not linked_costumes:
+            continue
+        costume_refs = "、".join(f"{costume.token}（{costume.name}）" for costume in linked_costumes)
+        other_costumes = [
+            costume
+            for costume in costumes
+            if costume not in linked_costumes
+        ]
+        line = f"{character.token}（{character.name}）必须穿{costume_refs}，不得换成其他颜色或其他服装。"
+        if other_costumes:
+            other_refs = "、".join(f"{costume.token}（{costume.name}）" for costume in other_costumes)
+            line += f" 不要把{other_refs}套到{character.token}（{character.name}）身上。"
+        lines.append(line)
+
+    return lines
 
 
 class FrameDerivedPreview(GenerationDerivedPreview):
