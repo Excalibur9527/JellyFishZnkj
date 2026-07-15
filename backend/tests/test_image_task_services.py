@@ -331,9 +331,48 @@ def test_derive_frame_preview_replaces_reference_names_with_stable_order() -> No
     assert "人物面部约束：如画面中有人物，必须保留清晰可辨的原创虚构人脸和完整自然五官" in preview.rendered_prompt
     assert "不要生成无脸、遮脸、背影替代、面部模糊或五官缺失" in preview.rendered_prompt
     assert "高质量影视概念参考图" in preview.rendered_prompt
-    assert "避免真实摄影照片、街拍、证件照或真人抓拍质感" in preview.rendered_prompt
+    assert "避免真实摄影照片、街拍或真人抓拍质感" in preview.rendered_prompt
     assert "不要模仿任何真实个人、明星、公众人物或版权角色" in preview.rendered_prompt
     assert "图1在雨夜中逼近图2" in preview.rendered_prompt
+
+
+def test_derive_frame_preview_binds_character_to_named_costume_reference() -> None:
+    base = build_frame_base_draft(
+        shot_id="shot-costume",
+        frame_type=ShotFrameType.key,
+        prompt="艾铃坐在铜镜前，身着绿色婚服，小荷站在她身后梳头",
+        director_command_summary="",
+        continuity_guidance="",
+        frame_specific_guidance="",
+        composition_anchor="",
+        screen_direction_guidance="",
+    )
+    context = build_frame_context(
+        shot_id="shot-costume",
+        frame_type=ShotFrameType.key,
+        items=[
+            ShotLinkedAssetItem(id="scene-1", type="scene", name="梳妆台", file_id="scene-file"),
+            ShotLinkedAssetItem(id="char-1", type="character", name="艾铃", file_id="ailing-file"),
+            ShotLinkedAssetItem(id="char-2", type="character", name="小荷", file_id="xiaohe-file"),
+            ShotLinkedAssetItem(id="costume-1", type="costume", name="艾铃-唐朝婚服", file_id="ailing-costume-file"),
+            ShotLinkedAssetItem(id="costume-2", type="costume", name="小荷-红色服装", file_id="xiaohe-costume-file"),
+        ],
+    )
+
+    preview = derive_frame_preview(base=base, context=context)
+
+    assert preview.images == [
+        "scene-file",
+        "ailing-file",
+        "xiaohe-file",
+        "ailing-costume-file",
+        "xiaohe-costume-file",
+    ]
+    assert "## 参考图绑定硬约束" in preview.rendered_prompt
+    assert "图2（艾铃）必须穿图4（艾铃-唐朝婚服），不得换成其他颜色或其他服装。" in preview.rendered_prompt
+    assert "不要把图5（小荷-红色服装）套到图2（艾铃）身上。" in preview.rendered_prompt
+    assert "图3（小荷）必须穿图5（小荷-红色服装），不得换成其他颜色或其他服装。" in preview.rendered_prompt
+    assert "服装图只作为服装参考，不作为人物身份参考" in preview.rendered_prompt
 
 
 def test_derive_frame_preview_does_not_add_face_prompt_for_scene_only_frame() -> None:
